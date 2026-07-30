@@ -23,6 +23,11 @@ class ChapterListActivity : AppCompatActivity() {
         const val EXTRA_FILE_NAME = "extra_file_name"
     }
 
+    private sealed class LoadResult {
+        data class Chapters(val titles: List<String>) : LoadResult()
+        object NoExtractableText : LoadResult()
+    }
+
     private lateinit var binding: ActivityChapterListBinding
     private lateinit var adapter: ChapterAdapter
 
@@ -56,11 +61,20 @@ class ChapterListActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                val titles = withContext(Dispatchers.IO) { loadChapterTitles(filePath, fileType) }
+                val result = withContext(Dispatchers.IO) { loadBook(filePath, fileType) }
                 binding.progressBar.visibility = View.GONE
-                adapter.updateItems(titles)
-                if (titles.isEmpty()) {
-                    Toast.makeText(this@ChapterListActivity, getString(R.string.sin_capitulos), Toast.LENGTH_LONG).show()
+                when (result) {
+                    is LoadResult.Chapters -> {
+                        adapter.updateItems(result.titles)
+                        if (result.titles.isEmpty()) {
+                            Toast.makeText(this@ChapterListActivity, getString(R.string.sin_capitulos), Toast.LENGTH_LONG).show()
+                        }
+                    }
+                    LoadResult.NoExtractableText -> {
+                        binding.recyclerChapters.visibility = View.GONE
+                        binding.textNoText.visibility = View.VISIBLE
+                        binding.textNoText.text = getString(R.string.pdf_sin_texto)
+                    }
                 }
             } catch (e: Exception) {
                 binding.progressBar.visibility = View.GONE
@@ -69,17 +83,21 @@ class ChapterListActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadChapterTitles(path: String, type: String): List<String> {
+    private fun loadBook(path: String, type: String): LoadResult {
         return if (type == "epub") {
             val parser = EpubParser(File(path))
             val book = parser.parse()
             parser.close()
-            book.chapters.map { it.title }
+            LoadResult.Chapters(book.chapters.map { it.title })
         } else {
             val parser = PdfParser(applicationContext, File(path))
             val book = parser.parse()
             parser.close()
-            book.chapters.map { it.title }
+            if (!book.hasExtractableText) {
+                LoadResult.NoExtractableText
+            } else {
+                LoadResult.Chapters(book.chapters.map { it.title })
+            }
         }
     }
 }

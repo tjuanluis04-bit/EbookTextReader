@@ -56,4 +56,7 @@ dependencies {
 
     // Lectura de PDF (extracción de texto continuo, sin cortes por página)
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+
+    // Renderizado de Markdown (subtítulos, negrita, itálica) en pantalla
+    implementation("io.noties.markwon:core:4.6.2")
 }

@@ -2,6 +2,8 @@ package com.textreader.app.epub
 
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
+import org.jsoup.nodes.Node
+import org.jsoup.nodes.TextNode
 import org.w3c.dom.Document
 import org.w3c.dom.Element as XmlElement
 import java.io.File
@@ -12,12 +14,21 @@ import javax.xml.parsers.DocumentBuilderFactory
 /**
  * Lee un archivo .epub (que es un .zip con XHTML adentro) y permite:
  * - Obtener la lista de capítulos (con título, tomado del índice del libro).
- * - Extraer el texto completo y corrido de un capítulo, sin cortes de página.
+ * - Extraer el texto de un capítulo en formato Markdown: separa párrafos,
+ *   distingue subtítulos (## ...), negrita/itálica, citas y listas.
  */
 class EpubParser(private val file: File) {
 
     private val zipFile = ZipFile(file)
     private lateinit var opfDir: String
+
+    private val headingTags = mapOf(
+        "h1" to 1, "h2" to 2, "h3" to 3, "h4" to 4, "h5" to 5, "h6" to 6
+    )
+    private val blockContainerTags = setOf(
+        "p", "div", "section", "article", "blockquote", "ul", "ol",
+        "h1", "h2", "h3", "h4", "h5", "h6"
+    )
 
     fun parse(): EpubBook {
         val containerXml = readEntryAsString("META-INF/container.xml")
@@ -100,28 +111,96 @@ class EpubParser(private val file: File) {
         return EpubBook(title = bookTitle, chapters = chapters)
     }
 
-    /** Devuelve el texto completo y corrido de un capítulo, sin cortes de página. */
-    fun extractChapterText(href: String): String {
+    /**
+     * Texto del capítulo en formato Markdown: subtítulos como `## texto`,
+     * párrafos separados por línea en blanco, negrita/itálica preservadas.
+     */
+    fun extractChapterMarkdown(href: String): String {
         val doc = Jsoup.parse(readEntryAsString(href))
         val sb = StringBuilder()
-        appendReadableText(doc.body(), sb)
+        appendMarkdownBlocks(doc.body(), sb)
         return sb.toString().trim()
     }
 
-    private fun appendReadableText(element: Element, sb: StringBuilder) {
-        val blockTags = setOf("p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "section", "article")
-        for (node in element.childNodes()) {
-            if (node !is Element) continue
+    private fun appendMarkdownBlocks(container: Element, sb: StringBuilder) {
+        for (node in container.children()) {
             val tag = node.tagName().lowercase()
             when {
                 tag == "script" || tag == "style" -> continue
-                tag == "br" -> sb.append("\n")
-                tag in blockTags -> {
-                    val text = node.text().trim()
-                    if (text.isNotEmpty()) sb.append(text).append("\n\n")
+
+                headingTags.containsKey(tag) -> {
+                    val text = inlineMarkdown(node).trim()
+                    if (text.isNotEmpty()) {
+                        sb.append("#".repeat(headingTags.getValue(tag))).append(' ').append(text).append("\n\n")
+                    }
                 }
-                else -> appendReadableText(node, sb)
+
+                tag == "blockquote" -> {
+                    val text = inlineMarkdown(node).trim()
+                    if (text.isNotEmpty()) {
+                        text.split("\n").forEach { line -> sb.append("> ").append(line.trim()).append('\n') }
+                        sb.append('\n')
+                    }
+                }
+
+                tag == "li" -> {
+                    val text = inlineMarkdown(node).trim()
+                    if (text.isNotEmpty()) sb.append("- ").append(text).append('\n')
+                }
+
+                tag == "ul" || tag == "ol" -> {
+                    appendMarkdownBlocks(node, sb)
+                    sb.append('\n')
+                }
+
+                tag in blockContainerTags -> {
+                    // Si tiene hijos en bloque (otro párrafo, otro div, etc.) seguimos bajando;
+                    // si no, es un bloque de texto "hoja" y lo tratamos como párrafo.
+                    val hasBlockChildren = node.children().any { it.tagName().lowercase() in blockContainerTags }
+                    if (hasBlockChildren) {
+                        appendMarkdownBlocks(node, sb)
+                    } else {
+                        val text = inlineMarkdown(node).trim()
+                        if (text.isNotEmpty()) sb.append(text).append("\n\n")
+                    }
+                }
+
+                else -> appendMarkdownBlocks(node, sb)
             }
+        }
+    }
+
+    /** Convierte el contenido inline de un elemento (texto, negrita, itálica, saltos) a Markdown. */
+    private fun inlineMarkdown(element: Element): String {
+        val sb = StringBuilder()
+        for (node in element.childNodes()) {
+            appendInlineNode(node, sb)
+        }
+        return sb.toString()
+    }
+
+    private fun appendInlineNode(node: Node, sb: StringBuilder) {
+        when (node) {
+            is TextNode -> sb.append(node.text())
+            is Element -> {
+                val tag = node.tagName().lowercase()
+                when (tag) {
+                    "script", "style" -> Unit
+                    "br" -> sb.append("  \n")
+                    "strong", "b" -> {
+                        sb.append("**")
+                        node.childNodes().forEach { appendInlineNode(it, sb) }
+                        sb.append("**")
+                    }
+                    "em", "i" -> {
+                        sb.append("*")
+                        node.childNodes().forEach { appendInlineNode(it, sb) }
+                        sb.append("*")
+                    }
+                    else -> node.childNodes().forEach { appendInlineNode(it, sb) }
+                }
+            }
+            else -> Unit
         }
     }
 

@@ -9,4 +9,9 @@
     <string name="sin_capitulos">No se encontraron capítulos en este archivo</string>
     <string name="copiar_capitulo">Copiar capítulo completo</string>
     <string name="capitulo_copiado">Capítulo copiado al portapapeles</string>
+    <string name="alinear_izquierda">Izquierda</string>
+    <string name="alinear_centro">Centro</string>
+    <string name="alinear_derecha">Derecha</string>
+    <string name="alinear_justificado">Justificado</string>
+    <string name="pdf_sin_texto">Este PDF no tiene texto seleccionable: parece ser un documento escaneado (imagen). Esta app no hace OCR, así que no se puede extraer ni copiar el texto.</string>
 </resources>

@@ -4,7 +4,9 @@ import android.content.Context
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
+import com.tom_roush.pdfbox.text.TextPosition
 import java.io.File
+import kotlin.math.roundToInt
 
 data class PdfChapter(
     val title: String,
@@ -14,21 +16,23 @@ data class PdfChapter(
 
 data class PdfBook(
     val chapters: List<PdfChapter>,
-    val pageCount: Int
+    val pageCount: Int,
+    /** false si el PDF no tiene texto real (por ejemplo, es un escaneo/imagen y necesitaría OCR). */
+    val hasExtractableText: Boolean
 )
 
 /**
- * Extrae texto de un PDF de forma continua (uniendo todas las páginas de un bloque
- * en un solo texto), en vez de mostrarlo cortado página por página.
- *
- * Los PDF no tienen "capítulos" como tal, así que si el documento es corto se trata
- * como un único bloque de texto, y si es largo se lo divide en bloques de páginas
- * (no en páginas sueltas) para que copiarlo sea más cómodo.
+ * Extrae texto de un PDF de forma continua (uniendo todas las líneas de un párrafo
+ * en un solo bloque, sin cortes de página) y en formato Markdown: los párrafos con
+ * una fuente notablemente más grande que el resto del documento se tratan como
+ * subtítulos (## ...), ya que los PDF no tienen "capítulos" reales.
  */
 class PdfParser(context: Context, private val file: File) {
 
     companion object {
         private const val PAGES_PER_BLOCK = 25
+        private const val SAMPLE_PAGES_FOR_TEXT_CHECK = 15
+        private const val MIN_CHARS_PER_SAMPLED_PAGE = 5
     }
 
     init {
@@ -44,8 +48,11 @@ class PdfParser(context: Context, private val file: File) {
     fun parse(): PdfBook {
         val doc = open()
         val pageCount = doc.numberOfPages
+        val hasText = hasExtractableText(doc)
 
-        val chapters = if (pageCount <= PAGES_PER_BLOCK) {
+        val chapters = if (!hasText) {
+            emptyList()
+        } else if (pageCount <= PAGES_PER_BLOCK) {
             listOf(PdfChapter("Documento completo", 0, pageCount - 1))
         } else {
             val list = ArrayList<PdfChapter>()
@@ -58,21 +65,85 @@ class PdfParser(context: Context, private val file: File) {
             list
         }
 
-        return PdfBook(chapters, pageCount)
+        return PdfBook(chapters, pageCount, hasText)
     }
 
-    /** Texto corrido de un rango de páginas, sin marcas de corte de página. */
-    fun extractText(startPage: Int, endPage: Int): String {
-        val doc = open()
+    /** Revisa una muestra de páginas para saber si el PDF tiene texto real o es solo imagen/escaneo. */
+    private fun hasExtractableText(doc: PDDocument): Boolean {
+        val sampleSize = minOf(doc.numberOfPages, SAMPLE_PAGES_FOR_TEXT_CHECK)
+        if (sampleSize <= 0) return false
         val stripper = PDFTextStripper()
+        stripper.startPage = 1
+        stripper.endPage = sampleSize
+        val text = stripper.getText(doc)
+        val meaningfulChars = text.count { !it.isWhitespace() }
+        return meaningfulChars > sampleSize * MIN_CHARS_PER_SAMPLED_PAGE
+    }
+
+    /** Texto en Markdown de un rango de páginas, corrido y con subtítulos detectados por tamaño de fuente. */
+    fun extractMarkdown(startPage: Int, endPage: Int): String {
+        val doc = open()
+        val stripper = ParagraphCollectorStripper()
         stripper.startPage = startPage + 1
         stripper.endPage = endPage + 1
-        stripper.lineSeparator = "\n"
-        return stripper.getText(doc).trim()
+        stripper.sortByPosition = true
+        stripper.getText(doc) // dispara los callbacks internos; no usamos el texto devuelto directamente
+
+        val allSizes = stripper.paragraphFontSizes.flatten()
+        val bodySize = mostCommonRoundedSize(allSizes)
+
+        val sb = StringBuilder()
+        for (i in stripper.paragraphTexts.indices) {
+            val rawText = stripper.paragraphTexts[i].toString().trim().replace(Regex("\\s+"), " ")
+            if (rawText.isEmpty()) continue
+
+            val sizes = stripper.paragraphFontSizes[i]
+            val avgSize = if (sizes.isNotEmpty()) sizes.average() else bodySize
+            val looksLikeHeading = rawText.length < 120 && bodySize > 0.0
+
+            val prefix = when {
+                !looksLikeHeading -> ""
+                avgSize >= bodySize * 1.4 -> "# "
+                avgSize >= bodySize * 1.15 -> "## "
+                avgSize >= bodySize * 1.05 -> "### "
+                else -> ""
+            }
+            sb.append(prefix).append(rawText).append("\n\n")
+        }
+        return sb.toString().trim()
+    }
+
+    private fun mostCommonRoundedSize(sizes: List<Double>): Double {
+        if (sizes.isEmpty()) return 0.0
+        val buckets = sizes.groupingBy { (it * 2).roundToInt() / 2.0 }.eachCount()
+        return buckets.maxByOrNull { it.value }?.key ?: sizes.average()
     }
 
     fun close() {
         document?.close()
         document = null
+    }
+
+    /**
+     * Agrupa el texto por párrafos (usando la detección de párrafos propia de PDFBox)
+     * y guarda, para cada párrafo, el tamaño de fuente de cada línea que lo compone.
+     */
+    private class ParagraphCollectorStripper : PDFTextStripper() {
+        val paragraphTexts = mutableListOf(StringBuilder())
+        val paragraphFontSizes = mutableListOf(mutableListOf<Double>())
+
+        override fun writeString(text: String, textPositions: MutableList<TextPosition>) {
+            super.writeString(text, textPositions)
+            if (text.isNotBlank()) {
+                paragraphTexts.last().append(text).append(' ')
+                textPositions.forEach { paragraphFontSizes.last().add(it.fontSizeInPt.toDouble()) }
+            }
+        }
+
+        override fun writeParagraphSeparator() {
+            super.writeParagraphSeparator()
+            paragraphTexts.add(StringBuilder())
+            paragraphFontSizes.add(mutableListOf())
+        }
     }
 }
