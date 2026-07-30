@@ -1,0 +1,6 @@
+<resources>
+    <color name="brand_primary">#1E3A5F</color>
+    <color name="brand_primary_dark">#122436</color>
+    <color name="brand_accent">#E0A458</color>
+    <color name="status_text">#B00020</color>
+</resources>

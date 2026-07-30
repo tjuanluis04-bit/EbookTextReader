@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Libro abierto, centrado en la zona segura del ícono adaptativo -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,38 C48,34 39,31.5 31,31.5 C29.3,31.5 28,32.9 28,34.6 L28,73.4 C28,75.1 29.3,76.5 31,76.5 C39,76.5 48,79 54,83 C60,79 69,76.5 77,76.5 C78.7,76.5 80,75.1 80,73.4 L80,34.6 C80,32.9 78.7,31.5 77,31.5 C69,31.5 60,34 54,38 Z"/>
+    <path
+        android:fillColor="#1E3A5F"
+        android:strokeColor="#1E3A5F"
+        android:strokeWidth="1.2"
+        android:pathData="M54,38 L54,83"/>
+    <path
+        android:fillColor="#1E3A5F"
+        android:strokeColor="#1E3A5F"
+        android:strokeWidth="1.4"
+        android:pathData="M33,42 L48,42 M33,49 L48,49 M33,56 L46,56"/>
+    <path
+        android:fillColor="#1E3A5F"
+        android:strokeColor="#1E3A5F"
+        android:strokeWidth="1.4"
+        android:pathData="M60,42 L75,42 M60,49 L75,49 M62,56 L75,56"/>
+</vector>

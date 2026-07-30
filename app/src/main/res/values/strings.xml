@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">Lector de Texto</string>
+    <string name="subtitulo_home">Abrí un EPUB o PDF y copiá cada capítulo completo, sin cortes de página.</string>
+    <string name="abrir_archivo">Abrir archivo (EPUB o PDF)</string>
+    <string name="formato_no_soportado">Formato no soportado. Elegí un archivo .epub o .pdf</string>
+    <string name="cargando">Cargando…</string>
+    <string name="error_leer_archivo">No se pudo leer el archivo seleccionado</string>
+    <string name="error_procesar_libro">No se pudo procesar el libro</string>
+    <string name="sin_capitulos">No se encontraron capítulos en este archivo</string>
+    <string name="copiar_capitulo">Copiar capítulo completo</string>
+    <string name="capitulo_copiado">Capítulo copiado al portapapeles</string>
+</resources>
