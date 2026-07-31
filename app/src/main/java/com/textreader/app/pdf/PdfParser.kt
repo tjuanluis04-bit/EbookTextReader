@@ -3,6 +3,8 @@ package com.textreader.app.pdf
 import android.content.Context
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPage
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import com.tom_roush.pdfbox.text.TextPosition
 import java.io.File
@@ -18,14 +20,22 @@ data class PdfBook(
     val chapters: List<PdfChapter>,
     val pageCount: Int,
     /** false si el PDF no tiene texto real (por ejemplo, es un escaneo/imagen y necesitaría OCR). */
-    val hasExtractableText: Boolean
+    val hasExtractableText: Boolean,
+    /** true si los capítulos vienen de los marcadores reales del PDF (exactos), no de bloques de páginas. */
+    val chaptersFromBookmarks: Boolean
 )
 
 /**
  * Extrae texto de un PDF de forma continua (uniendo todas las líneas de un párrafo
- * en un solo bloque, sin cortes de página) y en formato Markdown: los párrafos con
- * una fuente notablemente más grande que el resto del documento se tratan como
- * subtítulos (## ...), ya que los PDF no tienen "capítulos" reales.
+ * en un solo bloque, sin cortes de página) y en formato Markdown.
+ *
+ * Los capítulos se arman, en orden de preferencia:
+ * 1. A partir de los marcadores/outline reales del PDF (si el archivo los trae),
+ *    que son la fuente exacta de la estructura del documento.
+ * 2. Si no hay marcadores, se divide en bloques de páginas como respaldo.
+ *
+ * Dentro de cada capítulo, los párrafos con una fuente notablemente más grande
+ * que el resto del documento se tratan como subtítulos (## ...).
  */
 class PdfParser(context: Context, private val file: File) {
 
@@ -50,22 +60,78 @@ class PdfParser(context: Context, private val file: File) {
         val pageCount = doc.numberOfPages
         val hasText = hasExtractableText(doc)
 
-        val chapters = if (!hasText) {
-            emptyList()
-        } else if (pageCount <= PAGES_PER_BLOCK) {
-            listOf(PdfChapter("Documento completo", 0, pageCount - 1))
-        } else {
-            val list = ArrayList<PdfChapter>()
-            var start = 0
-            while (start < pageCount) {
-                val end = minOf(start + PAGES_PER_BLOCK - 1, pageCount - 1)
-                list.add(PdfChapter("Páginas ${start + 1} a ${end + 1}", start, end))
-                start = end + 1
-            }
-            list
+        if (!hasText) {
+            return PdfBook(emptyList(), pageCount, hasExtractableText = false, chaptersFromBookmarks = false)
         }
 
-        return PdfBook(chapters, pageCount, hasText)
+        val bookmarkChapters = try {
+            buildChaptersFromBookmarks(doc, pageCount)
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        return if (bookmarkChapters.isNotEmpty()) {
+            PdfBook(bookmarkChapters, pageCount, hasExtractableText = true, chaptersFromBookmarks = true)
+        } else {
+            PdfBook(buildPageBlockChapters(pageCount), pageCount, hasExtractableText = true, chaptersFromBookmarks = false)
+        }
+    }
+
+    /** Arma capítulos a partir de los marcadores (outline) de nivel superior del PDF, si existen. */
+    private fun buildChaptersFromBookmarks(doc: PDDocument, pageCount: Int): List<PdfChapter> {
+        val outline = doc.documentCatalog.documentOutline ?: return emptyList()
+
+        val raw = ArrayList<Pair<String, Int>>()
+        var item: PDOutlineItem? = outline.firstChild
+        while (item != null) {
+            val title = item.title?.trim().orEmpty()
+            val pageIndex = resolveItemPageIndex(doc, item)
+            if (title.isNotEmpty() && pageIndex != null && pageIndex in 0 until pageCount) {
+                raw.add(title to pageIndex)
+            }
+            item = item.nextSibling
+        }
+
+        val cleaned = raw.distinctBy { it.second }.sortedBy { it.second }
+        if (cleaned.isEmpty()) return emptyList()
+
+        return cleaned.mapIndexed { index, (title, startPage) ->
+            val endPage = if (index + 1 < cleaned.size) cleaned[index + 1].second - 1 else pageCount - 1
+            PdfChapter(title, startPage, endPage.coerceAtLeast(startPage))
+        }
+    }
+
+    private fun resolveItemPageIndex(doc: PDDocument, item: PDOutlineItem): Int? {
+        return try {
+            val page = item.findDestinationPage(doc) ?: return null
+            indexOfPage(doc, page)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun indexOfPage(doc: PDDocument, target: PDPage): Int? {
+        var idx = 0
+        for (page in doc.pages) {
+            if (page.cosObject === target.cosObject) return idx
+            idx++
+        }
+        return null
+    }
+
+    /** Respaldo cuando el PDF no trae marcadores: bloques fijos de páginas. */
+    private fun buildPageBlockChapters(pageCount: Int): List<PdfChapter> {
+        if (pageCount <= PAGES_PER_BLOCK) {
+            return listOf(PdfChapter("Documento completo", 0, pageCount - 1))
+        }
+        val list = ArrayList<PdfChapter>()
+        var start = 0
+        while (start < pageCount) {
+            val end = minOf(start + PAGES_PER_BLOCK - 1, pageCount - 1)
+            list.add(PdfChapter("Páginas ${start + 1} a ${end + 1}", start, end))
+            start = end + 1
+        }
+        return list
     }
 
     /** Revisa una muestra de páginas para saber si el PDF tiene texto real o es solo imagen/escaneo. */

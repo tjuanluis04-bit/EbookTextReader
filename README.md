@@ -7,6 +7,18 @@ botón para copiar el capítulo completo al portapapeles de una sola vez.
 
 ## Funciones
 
+- **Detección exacta de capítulos**:
+  - **EPUB**: los capítulos salen del índice real del libro (`toc.ncx` /
+    `nav.xhtml`), no de la lista cruda de archivos. Esto evita que la tapa,
+    la portadilla o la página de copyright aparezcan como "capítulos", y
+    corta bien incluso cuando un capítulo abarca varios archivos o cuando
+    varios capítulos comparten un mismo archivo (separados por anclas `#id`).
+  - **PDF**: si el archivo tiene marcadores/outline (bookmarks) reales, se
+    usan esos como capítulos exactos. Si el PDF no los tiene, se avisa y se
+    divide en bloques de 25 páginas como respaldo.
+- **Navegación entre capítulos sin salir de la pantalla**: en la pantalla de
+  lectura hay botones "‹ Anterior" y "Siguiente ›" que cargan el capítulo
+  correspondiente en el mismo lugar (sin volver a la lista).
 - **Markdown**: los subtítulos dentro de un capítulo se distinguen del resto
   del texto, y los párrafos quedan bien separados (como en el libro original).
   - En **EPUB** se usan las etiquetas HTML reales (`<h1>`-`<h6>`, `<strong>`,
@@ -24,14 +36,17 @@ botón para copiar el capítulo completo al portapapeles de una sola vez.
 - **Copiar capítulo completo**: copia el texto ya limpio (sin símbolos de
   Markdown) al portapapeles de un solo toque.
 
-## Cómo funciona la extracción
+## Cómo se arman los capítulos
 
-- **EPUB**: es en realidad un `.zip`. La app lee el índice del libro (`toc.ncx`
-  o `nav.xhtml`) para armar la lista de capítulos con sus títulos reales.
-- **PDF**: los PDF no tienen "capítulos" reales, así que si el documento es
-  corto se trata como un único texto; si es largo, se divide en bloques de 25
-  páginas (el texto dentro de cada bloque sale corrido, sin las interrupciones
-  de página que tienen los lectores comunes).
+- **EPUB**: se lee el índice (`toc.ncx` o `nav.xhtml`), pero solo su nivel
+  superior (para no confundir subtítulos con capítulos). Cada entrada se
+  ubica exactamente en el archivo/ancla donde empieza, y el capítulo termina
+  justo donde arranca el siguiente. Si el EPUB no trae índice utilizable, se
+  usa como respaldo un capítulo por archivo del libro.
+- **PDF**: se intenta usar los marcadores reales del PDF (si los trae). Si no
+  los trae, se divide en bloques de 25 páginas (el texto dentro de cada
+  bloque sale corrido, sin las interrupciones de página que tienen los
+  lectores comunes), y la app te avisa que la división no es exacta.
 
 ## Estructura del proyecto
 

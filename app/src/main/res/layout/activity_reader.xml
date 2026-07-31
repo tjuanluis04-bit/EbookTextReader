@@ -62,7 +62,7 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         app:layout_constraintTop_toBottomOf="@id/rowAlignment"
-        app:layout_constraintBottom_toTopOf="@id/buttonCopyChapter"
+        app:layout_constraintBottom_toTopOf="@id/rowActions"
         android:padding="20dp">
 
         <TextView
@@ -80,17 +80,49 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         app:layout_constraintTop_toBottomOf="@id/rowAlignment"
-        app:layout_constraintBottom_toTopOf="@id/buttonCopyChapter"
+        app:layout_constraintBottom_toTopOf="@id/rowActions"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         android:visibility="gone" />
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/buttonCopyChapter"
+    <LinearLayout
+        android:id="@+id/rowActions"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:orientation="horizontal"
         android:layout_margin="16dp"
-        android:text="@string/copiar_capitulo"
-        app:layout_constraintBottom_toBottomOf="parent" />
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/buttonPrevChapter"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="6dp"
+            android:textAllCaps="false"
+            android:text="@string/capitulo_anterior" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/buttonCopyChapter"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="2"
+            android:textAllCaps="false"
+            android:text="@string/copiar_capitulo" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/buttonNextChapter"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="6dp"
+            android:textAllCaps="false"
+            android:text="@string/capitulo_siguiente" />
+
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

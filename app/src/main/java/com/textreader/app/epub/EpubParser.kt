@@ -11,9 +11,15 @@ import java.io.FileNotFoundException
 import java.util.zip.ZipFile
 import javax.xml.parsers.DocumentBuilderFactory
 
+/** Una entrada cruda del índice (TOC) del EPUB antes de resolverla contra el spine. */
+private data class RawTocEntry(val title: String, val href: String, val anchorId: String?)
+
 /**
  * Lee un archivo .epub (que es un .zip con XHTML adentro) y permite:
- * - Obtener la lista de capítulos (con título, tomado del índice del libro).
+ * - Obtener la lista de capítulos EXACTA, tomada del índice real del libro
+ *   (toc.ncx / nav.xhtml), no de la lista cruda de archivos. Un capítulo puede
+ *   abarcar varios archivos, o varios capítulos pueden compartir un mismo
+ *   archivo separados por anclas internas (#id).
  * - Extraer el texto de un capítulo en formato Markdown: separa párrafos,
  *   distingue subtítulos (## ...), negrita/itálica, citas y listas.
  */
@@ -21,6 +27,9 @@ class EpubParser(private val file: File) {
 
     private val zipFile = ZipFile(file)
     private lateinit var opfDir: String
+
+    private var spineHrefs: List<String> = emptyList()
+    private var chapters: List<EpubChapter> = emptyList()
 
     private val headingTags = mapOf(
         "h1" to 1, "h2" to 2, "h3" to 3, "h4" to 4, "h5" to 5, "h6" to 6
@@ -59,114 +68,181 @@ class EpubParser(private val file: File) {
             if (properties.contains("nav")) navHref = href
         }
 
-        // Spine: orden real de lectura de los capítulos
+        // Spine: orden real de lectura de los archivos del libro
         val spineItems = opfDoc.getElementsByTagName("itemref")
-        val spineHrefs = ArrayList<String>()
+        val spineList = ArrayList<String>()
         for (i in 0 until spineItems.length) {
             val itemref = spineItems.item(i) as XmlElement
             val idref = itemref.getAttribute("idref")
-            idToHref[idref]?.let { spineHrefs.add(resolvePath(opfDir, it)) }
+            idToHref[idref]?.let { spineList.add(resolvePath(opfDir, it)) }
         }
+        spineHrefs = spineList
 
-        // Títulos de capítulos: intenta leerlos del NCX (EPUB2) o del Nav (EPUB3)
-        val hrefToTitle = HashMap<String, String>()
-        try {
+        // Índice real del libro (solo el nivel superior = capítulos, no sub-secciones)
+        val rawToc: List<RawTocEntry> = try {
             if (ncxId != null) {
-                val ncxHref = resolvePath(opfDir, idToHref[ncxId]!!)
-                val ncxDoc = parseXml(readEntryAsString(ncxHref))
-                val ncxDir = ncxHref.substringBeforeLast('/', "")
-                val navPoints = ncxDoc.getElementsByTagName("navPoint")
-                for (i in 0 until navPoints.length) {
-                    val navPoint = navPoints.item(i) as XmlElement
-                    val labelText = navPoint.getElementsByTagName("text").item(0)?.textContent ?: continue
-                    val contentEl = navPoint.getElementsByTagName("content").item(0) as? XmlElement ?: continue
-                    val src = contentEl.getAttribute("src").substringBefore('#')
-                    if (src.isNotEmpty()) {
-                        hrefToTitle[resolvePath(ncxDir, src)] = labelText.trim()
-                    }
-                }
+                readTopLevelTocFromNcx(idToHref.getValue(ncxId))
             } else if (navHref != null) {
-                val navPath = resolvePath(opfDir, navHref)
-                val navDir = navPath.substringBeforeLast('/', "")
-                val soup = Jsoup.parse(readEntryAsString(navPath))
-                val navEl = soup.select("nav").firstOrNull()
-                navEl?.select("a")?.forEach { a ->
-                    val href = a.attr("href").substringBefore('#')
-                    if (href.isNotEmpty()) {
-                        hrefToTitle[resolvePath(navDir, href)] = a.text().trim()
-                    }
-                }
+                readTopLevelTocFromNav(navHref)
+            } else {
+                emptyList()
             }
         } catch (e: Exception) {
-            // Si el índice no se puede leer, seguimos con títulos genéricos.
+            emptyList()
         }
 
-        val chapters = spineHrefs.mapIndexed { index, href ->
-            EpubChapter(
-                title = hrefToTitle[href]?.takeIf { it.isNotBlank() } ?: "Capítulo ${index + 1}",
-                href = href
-            )
+        val resolvedChapters = ArrayList<EpubChapter>()
+        for (entry in rawToc) {
+            val spineIndex = spineHrefs.indexOf(entry.href)
+            if (spineIndex >= 0 && entry.title.isNotBlank()) {
+                resolvedChapters.add(EpubChapter(entry.title, spineIndex, entry.anchorId))
+            }
+        }
+
+        chapters = if (resolvedChapters.isNotEmpty()) {
+            resolvedChapters
+        } else {
+            // Respaldo: el EPUB no tiene índice utilizable, un capítulo por archivo del spine.
+            spineHrefs.mapIndexed { index, _ -> EpubChapter("Capítulo ${index + 1}", index, null) }
         }
 
         return EpubBook(title = bookTitle, chapters = chapters)
     }
 
+    private fun readTopLevelTocFromNcx(ncxManifestHref: String): List<RawTocEntry> {
+        val ncxHref = resolvePath(opfDir, ncxManifestHref)
+        val ncxDoc = parseXml(readEntryAsString(ncxHref))
+        val ncxDir = ncxHref.substringBeforeLast('/', "")
+
+        val navMap = ncxDoc.getElementsByTagName("navMap").item(0) ?: return emptyList()
+        val topNavPoints = directChildren(navMap, "navPoint")
+
+        val entries = ArrayList<RawTocEntry>()
+        for (navPoint in topNavPoints) {
+            val label = directChild(navPoint, "navLabel")?.let { directChild(it, "text") }?.textContent?.trim()
+            val content = directChild(navPoint, "content") ?: continue
+            val src = content.getAttribute("src")
+            if (label.isNullOrBlank() || src.isBlank()) continue
+            val (hrefPart, anchor) = splitHrefAnchor(src)
+            entries.add(RawTocEntry(label, resolvePath(ncxDir, hrefPart), anchor))
+        }
+        return entries
+    }
+
+    private fun readTopLevelTocFromNav(navManifestHref: String): List<RawTocEntry> {
+        val navPath = resolvePath(opfDir, navManifestHref)
+        val navDir = navPath.substringBeforeLast('/', "")
+        val soup = Jsoup.parse(readEntryAsString(navPath))
+
+        val tocNav = soup.select("nav[epub|type=toc]").firstOrNull() ?: soup.select("nav").firstOrNull()
+            ?: return emptyList()
+        val topOl = tocNav.children().firstOrNull { it.tagName().equals("ol", ignoreCase = true) }
+            ?: return emptyList()
+
+        val entries = ArrayList<RawTocEntry>()
+        for (li in topOl.children()) {
+            if (!li.tagName().equals("li", ignoreCase = true)) continue
+            val a = li.children().firstOrNull { it.tagName().equals("a", ignoreCase = true) } ?: continue
+            val hrefRaw = a.attr("href")
+            if (hrefRaw.isBlank()) continue
+            val (hrefPart, anchor) = splitHrefAnchor(hrefRaw)
+            entries.add(RawTocEntry(a.text().trim(), resolvePath(navDir, hrefPart), anchor))
+        }
+        return entries
+    }
+
     /**
-     * Texto del capítulo en formato Markdown: subtítulos como `## texto`,
-     * párrafos separados por línea en blanco, negrita/itálica preservadas.
+     * Texto en Markdown de un capítulo, cortando exactamente donde termina
+     * (justo antes de que empiece el siguiente capítulo del índice), incluso
+     * si eso cae en medio de un archivo o abarca varios archivos.
      */
-    fun extractChapterMarkdown(href: String): String {
-        val doc = Jsoup.parse(readEntryAsString(href))
+    fun extractChapterMarkdown(index: Int): String {
+        val chapter = chapters.getOrNull(index) ?: return ""
+        val next = chapters.getOrNull(index + 1)
+        val startSpine = chapter.spineIndex
+        val endSpine = next?.spineIndex ?: (spineHrefs.size - 1)
+
         val sb = StringBuilder()
-        appendMarkdownBlocks(doc.body(), sb)
+        for (spineIdx in startSpine..endSpine) {
+            if (spineIdx !in spineHrefs.indices) continue
+            val startAnchor = if (spineIdx == startSpine) chapter.anchorId else null
+            val endAnchor = if (next != null && spineIdx == next.spineIndex) next.anchorId else null
+            val chunk = chapterFileChunk(spineHrefs[spineIdx], startAnchor, endAnchor)
+            chunk.forEach { appendMarkdownBlockElement(it, sb) }
+        }
         return sb.toString().trim()
     }
 
-    private fun appendMarkdownBlocks(container: Element, sb: StringBuilder) {
-        for (node in container.children()) {
-            val tag = node.tagName().lowercase()
-            when {
-                tag == "script" || tag == "style" -> continue
+    /** Devuelve los elementos de nivel superior del <body> de un archivo, recortados entre dos anclas. */
+    private fun chapterFileChunk(href: String, startAnchor: String?, endAnchor: String?): List<Element> {
+        val doc = Jsoup.parse(readEntryAsString(href))
+        val body = doc.body()
+        val children = body.children()
+        val startIdx = startAnchor?.let { findTopLevelChunkIndex(body, it) } ?: 0
+        val endIdx = endAnchor?.let { findTopLevelChunkIndex(body, it) } ?: children.size
+        val safeStart = startIdx.coerceIn(0, children.size)
+        val safeEnd = endIdx.coerceIn(safeStart, children.size)
+        return children.subList(safeStart, safeEnd)
+    }
 
-                headingTags.containsKey(tag) -> {
-                    val text = inlineMarkdown(node).trim()
-                    if (text.isNotEmpty()) {
-                        sb.append("#".repeat(headingTags.getValue(tag))).append(' ').append(text).append("\n\n")
-                    }
+    /** Ubica a qué hijo directo del <body> pertenece un elemento con id/anchor dado. */
+    private fun findTopLevelChunkIndex(body: Element, anchorId: String): Int? {
+        val target = body.getElementById(anchorId)
+            ?: body.select("a[name=$anchorId]").firstOrNull()
+            ?: return null
+        var node: Element? = target
+        while (node != null && node.parent() !== body) {
+            node = node.parent()
+        }
+        if (node == null) return null
+        val children = body.children()
+        for (i in children.indices) {
+            if (children[i] === node) return i
+        }
+        return null
+    }
+
+    private fun appendMarkdownBlockElement(node: Element, sb: StringBuilder) {
+        val tag = node.tagName().lowercase()
+        when {
+            tag == "script" || tag == "style" -> return
+
+            headingTags.containsKey(tag) -> {
+                val text = inlineMarkdown(node).trim()
+                if (text.isNotEmpty()) {
+                    sb.append("#".repeat(headingTags.getValue(tag))).append(' ').append(text).append("\n\n")
                 }
+            }
 
-                tag == "blockquote" -> {
-                    val text = inlineMarkdown(node).trim()
-                    if (text.isNotEmpty()) {
-                        text.split("\n").forEach { line -> sb.append("> ").append(line.trim()).append('\n') }
-                        sb.append('\n')
-                    }
-                }
-
-                tag == "li" -> {
-                    val text = inlineMarkdown(node).trim()
-                    if (text.isNotEmpty()) sb.append("- ").append(text).append('\n')
-                }
-
-                tag == "ul" || tag == "ol" -> {
-                    appendMarkdownBlocks(node, sb)
+            tag == "blockquote" -> {
+                val text = inlineMarkdown(node).trim()
+                if (text.isNotEmpty()) {
+                    text.split("\n").forEach { line -> sb.append("> ").append(line.trim()).append('\n') }
                     sb.append('\n')
                 }
-
-                tag in blockContainerTags -> {
-                    // Si tiene hijos en bloque (otro párrafo, otro div, etc.) seguimos bajando;
-                    // si no, es un bloque de texto "hoja" y lo tratamos como párrafo.
-                    val hasBlockChildren = node.children().any { it.tagName().lowercase() in blockContainerTags }
-                    if (hasBlockChildren) {
-                        appendMarkdownBlocks(node, sb)
-                    } else {
-                        val text = inlineMarkdown(node).trim()
-                        if (text.isNotEmpty()) sb.append(text).append("\n\n")
-                    }
-                }
-
-                else -> appendMarkdownBlocks(node, sb)
             }
+
+            tag == "li" -> {
+                val text = inlineMarkdown(node).trim()
+                if (text.isNotEmpty()) sb.append("- ").append(text).append('\n')
+            }
+
+            tag == "ul" || tag == "ol" -> {
+                node.children().forEach { appendMarkdownBlockElement(it, sb) }
+                sb.append('\n')
+            }
+
+            tag in blockContainerTags -> {
+                val hasBlockChildren = node.children().any { it.tagName().lowercase() in blockContainerTags }
+                if (hasBlockChildren) {
+                    node.children().forEach { appendMarkdownBlockElement(it, sb) }
+                } else {
+                    val text = inlineMarkdown(node).trim()
+                    if (text.isNotEmpty()) sb.append(text).append("\n\n")
+                }
+            }
+
+            else -> node.children().forEach { appendMarkdownBlockElement(it, sb) }
         }
     }
 
@@ -202,6 +278,35 @@ class EpubParser(private val file: File) {
             }
             else -> Unit
         }
+    }
+
+    private fun splitHrefAnchor(raw: String): Pair<String, String?> {
+        val hrefPart = raw.substringBefore('#')
+        val anchor = raw.substringAfter('#', "").ifEmpty { null }
+        return hrefPart to anchor
+    }
+
+    private fun directChild(parent: org.w3c.dom.Node, tagName: String): XmlElement? {
+        val children = parent.childNodes
+        for (i in 0 until children.length) {
+            val child = children.item(i)
+            if (child.nodeType == org.w3c.dom.Node.ELEMENT_NODE && child.nodeName == tagName) {
+                return child as XmlElement
+            }
+        }
+        return null
+    }
+
+    private fun directChildren(parent: org.w3c.dom.Node, tagName: String): List<XmlElement> {
+        val result = ArrayList<XmlElement>()
+        val children = parent.childNodes
+        for (i in 0 until children.length) {
+            val child = children.item(i)
+            if (child.nodeType == org.w3c.dom.Node.ELEMENT_NODE && child.nodeName == tagName) {
+                result.add(child as XmlElement)
+            }
+        }
+        return result
     }
 
     private fun readEntryAsString(path: String): String {

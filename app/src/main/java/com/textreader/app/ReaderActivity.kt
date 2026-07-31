@@ -15,6 +15,7 @@ import com.textreader.app.epub.EpubParser
 import com.textreader.app.pdf.PdfParser
 import io.noties.markwon.Markwon
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -34,10 +35,18 @@ class ReaderActivity : AppCompatActivity() {
         private const val ALIGN_JUSTIFY = "JUSTIFY"
     }
 
+    private data class ChapterLoadResult(val title: String, val markdown: String, val totalChapters: Int)
+
     private lateinit var binding: ActivityReaderBinding
     private lateinit var markwon: Markwon
+    private lateinit var filePath: String
+    private lateinit var fileType: String
+
+    private var currentIndex: Int = 0
+    private var totalChapters: Int = 0
     private var chapterMarkdown: String = ""
     private var chapterTitle: String = ""
+    private var loadJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,35 +54,51 @@ class ReaderActivity : AppCompatActivity() {
         setContentView(binding.root)
         markwon = Markwon.create(this)
 
-        val filePath = intent.getStringExtra(EXTRA_FILE_PATH)
-        val fileType = intent.getStringExtra(EXTRA_FILE_TYPE)
-        val chapterIndex = intent.getIntExtra(EXTRA_CHAPTER_INDEX, 0)
+        val path = intent.getStringExtra(EXTRA_FILE_PATH)
+        val type = intent.getStringExtra(EXTRA_FILE_TYPE)
+        val startIndex = intent.getIntExtra(EXTRA_CHAPTER_INDEX, 0)
 
-        if (filePath == null || fileType == null) {
+        if (path == null || type == null) {
             finish()
             return
         }
+        filePath = path
+        fileType = type
 
         setupAlignmentButtons()
         applyAlignment(loadSavedAlignment())
 
-        binding.progressBar.visibility = View.VISIBLE
-        binding.buttonCopyChapter.isEnabled = false
         binding.buttonCopyChapter.setOnClickListener {
             copyToClipboard(chapterTitle, markdownToPlainText(chapterMarkdown))
         }
+        binding.buttonPrevChapter.setOnClickListener {
+            if (currentIndex > 0) loadChapter(currentIndex - 1)
+        }
+        binding.buttonNextChapter.setOnClickListener {
+            if (currentIndex < totalChapters - 1) loadChapter(currentIndex + 1)
+        }
 
-        lifecycleScope.launch {
+        loadChapter(startIndex)
+    }
+
+    /** Carga un capítulo (por índice) dentro de esta misma pantalla, sin abrir otra Activity. */
+    private fun loadChapter(index: Int) {
+        loadJob?.cancel()
+        setLoadingState()
+
+        loadJob = lifecycleScope.launch {
             try {
-                val (loadedTitle, loadedMarkdown) = withContext(Dispatchers.IO) {
-                    loadChapterMarkdown(filePath, fileType, chapterIndex)
-                }
-                chapterTitle = loadedTitle
-                chapterMarkdown = loadedMarkdown
+                val result = withContext(Dispatchers.IO) { loadChapterData(filePath, fileType, index) }
+                currentIndex = index
+                totalChapters = result.totalChapters
+                chapterTitle = result.title
+                chapterMarkdown = result.markdown
+
                 title = chapterTitle
                 markwon.setMarkdown(binding.textContent, chapterMarkdown)
+                binding.scrollContent.post { binding.scrollContent.scrollTo(0, 0) }
                 binding.progressBar.visibility = View.GONE
-                binding.buttonCopyChapter.isEnabled = true
+                updateActionButtonsState()
             } catch (e: Exception) {
                 binding.progressBar.visibility = View.GONE
                 Toast.makeText(this@ReaderActivity, getString(R.string.error_procesar_libro), Toast.LENGTH_LONG).show()
@@ -81,22 +106,35 @@ class ReaderActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadChapterMarkdown(path: String, type: String, index: Int): Pair<String, String> {
+    private fun loadChapterData(path: String, type: String, index: Int): ChapterLoadResult {
         return if (type == "epub") {
             val parser = EpubParser(File(path))
             val book = parser.parse()
             val chapter = book.chapters[index]
-            val markdown = parser.extractChapterMarkdown(chapter.href)
+            val markdown = parser.extractChapterMarkdown(index)
             parser.close()
-            chapter.title to markdown
+            ChapterLoadResult(chapter.title, markdown, book.chapters.size)
         } else {
             val parser = PdfParser(applicationContext, File(path))
             val book = parser.parse()
             val chapter = book.chapters[index]
             val markdown = parser.extractMarkdown(chapter.startPage, chapter.endPage)
             parser.close()
-            chapter.title to markdown
+            ChapterLoadResult(chapter.title, markdown, book.chapters.size)
         }
+    }
+
+    private fun setLoadingState() {
+        binding.progressBar.visibility = View.VISIBLE
+        binding.buttonCopyChapter.isEnabled = false
+        binding.buttonPrevChapter.isEnabled = false
+        binding.buttonNextChapter.isEnabled = false
+    }
+
+    private fun updateActionButtonsState() {
+        binding.buttonCopyChapter.isEnabled = true
+        binding.buttonPrevChapter.isEnabled = currentIndex > 0
+        binding.buttonNextChapter.isEnabled = currentIndex < totalChapters - 1
     }
 
     /** Quita los símbolos de Markdown (#, **, >) para copiar texto limpio al portapapeles. */

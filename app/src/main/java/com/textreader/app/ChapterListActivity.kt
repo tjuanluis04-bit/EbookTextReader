@@ -24,7 +24,7 @@ class ChapterListActivity : AppCompatActivity() {
     }
 
     private sealed class LoadResult {
-        data class Chapters(val titles: List<String>) : LoadResult()
+        data class Chapters(val titles: List<String>, val infoMessage: String? = null) : LoadResult()
         object NoExtractableText : LoadResult()
     }
 
@@ -68,6 +68,8 @@ class ChapterListActivity : AppCompatActivity() {
                         adapter.updateItems(result.titles)
                         if (result.titles.isEmpty()) {
                             Toast.makeText(this@ChapterListActivity, getString(R.string.sin_capitulos), Toast.LENGTH_LONG).show()
+                        } else if (result.infoMessage != null) {
+                            Toast.makeText(this@ChapterListActivity, result.infoMessage, Toast.LENGTH_LONG).show()
                         }
                     }
                     LoadResult.NoExtractableText -> {
@@ -96,7 +98,8 @@ class ChapterListActivity : AppCompatActivity() {
             if (!book.hasExtractableText) {
                 LoadResult.NoExtractableText
             } else {
-                LoadResult.Chapters(book.chapters.map { it.title })
+                val info = if (!book.chaptersFromBookmarks) getString(R.string.pdf_sin_marcadores) else null
+                LoadResult.Chapters(book.chapters.map { it.title }, info)
             }
         }
     }
