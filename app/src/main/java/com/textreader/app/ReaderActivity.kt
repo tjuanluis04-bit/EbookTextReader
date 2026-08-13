@@ -26,6 +26,9 @@ class ReaderActivity : AppCompatActivity() {
         const val EXTRA_FILE_PATH = "extra_file_path"
         const val EXTRA_FILE_TYPE = "extra_file_type"
         const val EXTRA_CHAPTER_INDEX = "extra_chapter_index"
+        /** Si viene en true (solo para PDF), muestra el libro entero como un único texto corrido. */
+        const val EXTRA_FULL_BOOK = "extra_full_book"
+        const val EXTRA_FILE_NAME = "extra_file_name"
 
         private const val PREFS_NAME = "reader_prefs"
         private const val PREF_ALIGNMENT = "text_alignment"
@@ -41,6 +44,8 @@ class ReaderActivity : AppCompatActivity() {
     private lateinit var markwon: Markwon
     private lateinit var filePath: String
     private lateinit var fileType: String
+    private var fullBookMode: Boolean = false
+    private var fullBookTitle: String = ""
 
     private var currentIndex: Int = 0
     private var totalChapters: Int = 0
@@ -57,6 +62,8 @@ class ReaderActivity : AppCompatActivity() {
         val path = intent.getStringExtra(EXTRA_FILE_PATH)
         val type = intent.getStringExtra(EXTRA_FILE_TYPE)
         val startIndex = intent.getIntExtra(EXTRA_CHAPTER_INDEX, 0)
+        fullBookMode = intent.getBooleanExtra(EXTRA_FULL_BOOK, false)
+        fullBookTitle = intent.getStringExtra(EXTRA_FILE_NAME) ?: getString(R.string.libro_completo_titulo)
 
         if (path == null || type == null) {
             finish()
@@ -76,6 +83,11 @@ class ReaderActivity : AppCompatActivity() {
         }
         binding.buttonNextChapter.setOnClickListener {
             if (currentIndex < totalChapters - 1) loadChapter(currentIndex + 1)
+        }
+
+        if (fullBookMode) {
+            binding.buttonPrevChapter.visibility = View.GONE
+            binding.buttonNextChapter.visibility = View.GONE
         }
 
         loadChapter(startIndex)
@@ -107,6 +119,13 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun loadChapterData(path: String, type: String, index: Int): ChapterLoadResult {
+        if (fullBookMode) {
+            val parser = PdfParser(applicationContext, File(path))
+            val book = parser.parse()
+            val markdown = parser.extractMarkdown(0, book.pageCount - 1)
+            parser.close()
+            return ChapterLoadResult(fullBookTitle, markdown, 1)
+        }
         return if (type == "epub") {
             val parser = EpubParser(File(path))
             val book = parser.parse()

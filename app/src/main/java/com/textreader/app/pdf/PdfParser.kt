@@ -34,8 +34,11 @@ data class PdfBook(
  *    que son la fuente exacta de la estructura del documento.
  * 2. Si no hay marcadores, se divide en bloques de páginas como respaldo.
  *
- * Dentro de cada capítulo, los párrafos con una fuente notablemente más grande
- * que el resto del documento se tratan como subtítulos (## ...).
+ * También permite extraer el libro entero como un único texto corrido (modo
+ * "ver todo el libro"), sin depender de capítulos ni marcadores.
+ *
+ * Dentro del texto, los párrafos con una fuente notablemente más grande que el
+ * resto del documento se tratan como subtítulos (## ...).
  */
 class PdfParser(context: Context, private val file: File) {
 

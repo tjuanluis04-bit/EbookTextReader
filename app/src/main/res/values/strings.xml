@@ -17,4 +17,6 @@
     <string name="alinear_justificado">Justificado</string>
     <string name="pdf_sin_texto">Este PDF no tiene texto seleccionable: parece ser un documento escaneado (imagen). Esta app no hace OCR, así que no se puede extraer ni copiar el texto.</string>
     <string name="pdf_sin_marcadores">Este PDF no tiene marcadores de capítulos, así que se dividió en bloques de páginas.</string>
+    <string name="ver_libro_completo">Ver todo el libro (texto corrido)</string>
+    <string name="libro_completo_titulo">Libro completo</string>
 </resources>

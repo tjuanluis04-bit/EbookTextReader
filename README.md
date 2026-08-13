@@ -16,6 +16,10 @@ botón para copiar el capítulo completo al portapapeles de una sola vez.
   - **PDF**: si el archivo tiene marcadores/outline (bookmarks) reales, se
     usan esos como capítulos exactos. Si el PDF no los tiene, se avisa y se
     divide en bloques de 25 páginas como respaldo.
+- **PDF como libro completo**: además de navegar por capítulos/bloques, en la
+  lista de capítulos de un PDF hay un botón "Ver todo el libro (texto
+  corrido)" que muestra el documento entero como un único texto en Markdown,
+  para copiarlo todo de una sola vez sin ir bloque por bloque.
 - **Navegación entre capítulos sin salir de la pantalla**: en la pantalla de
   lectura hay botones "‹ Anterior" y "Siguiente ›" que cargan el capítulo
   correspondiente en el mismo lugar (sin volver a la lista).
@@ -25,7 +29,8 @@ botón para copiar el capítulo completo al portapapeles de una sola vez.
     `<em>`, listas, citas).
   - En **PDF** no existen subtítulos "de verdad", así que se detecta el
     tamaño de letra de cada bloque de texto: si es notablemente más grande
-    que el cuerpo del documento, se trata como subtítulo.
+    que el cuerpo del documento, se trata como subtítulo. Esto aplica igual
+    en el modo "libro completo".
 - **Detección de PDF escaneados**: si un PDF no tiene texto real (por ejemplo,
   es una imagen escaneada), la app lo detecta y avisa que necesitaría OCR, en
   vez de mostrar una lista de capítulos vacía o texto vacío.
@@ -44,17 +49,23 @@ botón para copiar el capítulo completo al portapapeles de una sola vez.
   justo donde arranca el siguiente. Si el EPUB no trae índice utilizable, se
   usa como respaldo un capítulo por archivo del libro.
 - **PDF**: se intenta usar los marcadores reales del PDF (si los trae). Si no
-  los trae, se divide en bloques de 25 páginas (el texto dentro de cada
-  bloque sale corrido, sin las interrupciones de página que tienen los
-  lectores comunes), y la app te avisa que la división no es exacta.
+  los trae, se divide en bloques de 25 páginas, y la app avisa que la
+  división no es exacta. En cualquier caso, siempre está disponible la
+  opción de ver el PDF entero como un solo texto corrido.
+
+## Ícono
+
+El ícono adaptativo usa la imagen provista como fondo (recortada para evitar
+el negro de las esquinas de origen) y un frente vacío, ya que el arte
+completo (libro + textura pintada) ya está resuelto en una sola imagen.
 
 ## Estructura del proyecto
 
 ```
 app/src/main/java/com/textreader/app/
 ├── MainActivity.kt            -> Elegir archivo (EPUB o PDF)
-├── ChapterListActivity.kt      -> Lista de capítulos del libro (o aviso si no hay texto)
-├── ReaderActivity.kt           -> Texto Markdown + alineación + botón "Copiar"
+├── ChapterListActivity.kt      -> Lista de capítulos (o aviso si no hay texto)
+├── ReaderActivity.kt           -> Texto Markdown + alineación + navegación + botón "Copiar"
 ├── ChapterAdapter.kt
 ├── epub/EpubParser.kt          -> Lectura y extracción de EPUB a Markdown
 └── pdf/PdfParser.kt            -> Lectura, extracción a Markdown y detección de PDF sin texto

@@ -30,21 +30,26 @@ class ChapterListActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityChapterListBinding
     private lateinit var adapter: ChapterAdapter
+    private lateinit var filePath: String
+    private lateinit var fileType: String
+    private lateinit var fileName: String
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityChapterListBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        val filePath = intent.getStringExtra(EXTRA_FILE_PATH)
-        val fileType = intent.getStringExtra(EXTRA_FILE_TYPE)
-        val fileName = intent.getStringExtra(EXTRA_FILE_NAME) ?: fileType.orEmpty()
+        val path = intent.getStringExtra(EXTRA_FILE_PATH)
+        val type = intent.getStringExtra(EXTRA_FILE_TYPE)
 
-        if (filePath == null || fileType == null) {
+        if (path == null || type == null) {
             Toast.makeText(this, getString(R.string.error_procesar_libro), Toast.LENGTH_LONG).show()
             finish()
             return
         }
+        filePath = path
+        fileType = type
+        fileName = intent.getStringExtra(EXTRA_FILE_NAME) ?: type
 
         title = fileName
         binding.recyclerChapters.layoutManager = LinearLayoutManager(this)
@@ -59,6 +64,16 @@ class ChapterListActivity : AppCompatActivity() {
         binding.recyclerChapters.adapter = adapter
         binding.progressBar.visibility = View.VISIBLE
 
+        binding.buttonFullBook.setOnClickListener {
+            val readerIntent = Intent(this, ReaderActivity::class.java).apply {
+                putExtra(ReaderActivity.EXTRA_FILE_PATH, filePath)
+                putExtra(ReaderActivity.EXTRA_FILE_TYPE, fileType)
+                putExtra(ReaderActivity.EXTRA_FULL_BOOK, true)
+                putExtra(ReaderActivity.EXTRA_FILE_NAME, fileName)
+            }
+            startActivity(readerIntent)
+        }
+
         lifecycleScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { loadBook(filePath, fileType) }
@@ -71,9 +86,12 @@ class ChapterListActivity : AppCompatActivity() {
                         } else if (result.infoMessage != null) {
                             Toast.makeText(this@ChapterListActivity, result.infoMessage, Toast.LENGTH_LONG).show()
                         }
+                        // La opción "ver todo el libro corrido" solo tiene sentido para PDF.
+                        binding.buttonFullBook.visibility = if (fileType == "pdf" && result.titles.isNotEmpty()) View.VISIBLE else View.GONE
                     }
                     LoadResult.NoExtractableText -> {
                         binding.recyclerChapters.visibility = View.GONE
+                        binding.buttonFullBook.visibility = View.GONE
                         binding.textNoText.visibility = View.VISIBLE
                         binding.textNoText.text = getString(R.string.pdf_sin_texto)
                     }
