@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Vacío a propósito: el arte completo (libro + fondo pintado) ya está en el
-     background del ícono adaptativo (ic_launcher_background). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
