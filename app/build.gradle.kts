@@ -8,7 +8,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.textreader.app"
+        applicationId = "com.textreader.app2"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
