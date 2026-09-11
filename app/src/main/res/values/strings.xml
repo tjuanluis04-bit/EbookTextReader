@@ -6,7 +6,6 @@
     <string name="cargando">Cargando…</string>
     <string name="error_leer_archivo">No se pudo leer el archivo seleccionado</string>
     <string name="error_procesar_libro">No se pudo procesar el libro</string>
-    <string name="sin_capitulos">No se encontraron capítulos en este archivo</string>
     <string name="copiar_capitulo">Copiar capítulo</string>
     <string name="capitulo_copiado">Capítulo copiado al portapapeles</string>
     <string name="capitulo_anterior">‹ Anterior</string>
@@ -15,8 +14,40 @@
     <string name="alinear_centro">Centro</string>
     <string name="alinear_derecha">Derecha</string>
     <string name="alinear_justificado">Justificado</string>
+    <string name="letra_mas_chica">A−</string>
+    <string name="letra_mas_grande">A+</string>
     <string name="pdf_sin_texto">Este PDF no tiene texto seleccionable: parece ser un documento escaneado (imagen). Esta app no hace OCR, así que no se puede extraer ni copiar el texto.</string>
-    <string name="pdf_sin_marcadores">Este PDF no tiene marcadores de capítulos, así que se dividió en bloques de páginas.</string>
-    <string name="ver_libro_completo">Ver todo el libro (texto corrido)</string>
     <string name="libro_completo_titulo">Libro completo</string>
+
+    <!-- Selector de método de obtención (PDF) -->
+    <string name="elegir_forma_obtencion">¿Cómo querés obtener las partes de este PDF?</string>
+    <string name="usar_marcadores">Usar los marcadores del PDF</string>
+    <string name="sin_marcadores_aviso">Este PDF no tiene marcadores de capítulo reales.</string>
+    <string name="usar_rangos_propios">Definir mis propias partes</string>
+    <string name="ver_libro_completo">Ver todo el libro (texto corrido)</string>
+
+    <!-- Selector de rangos personalizados -->
+    <string name="pdf_tiene_paginas">El PDF tiene %1$d páginas</string>
+    <string name="parte_numero">Parte %1$d</string>
+    <string name="titulo_parte_opcional">Título de la parte (opcional)</string>
+    <string name="desde_pagina">Desde página</string>
+    <string name="hasta_pagina">Hasta página</string>
+    <string name="agregar_parte">+ Agregar parte</string>
+    <string name="confirmar">Confirmar</string>
+    <string name="agrega_al_menos_una_parte">Agregá al menos una parte</string>
+    <string name="rango_invalido">El rango de la parte %1$d no es válido (tiene que estar entre 1 y %2$d, y el inicio no puede ser mayor que el fin)</string>
+
+    <!-- Pantalla de lectura -->
+    <string name="indice_capitulos">Índice</string>
+    <string name="cerrar">Cerrar</string>
+    <string name="guardar_imagen">Guardar imagen</string>
+    <string name="imagen_guardada">Imagen guardada en la galería</string>
+    <string name="error_guardar_imagen">No se pudo guardar la imagen</string>
+    <string name="permiso_denegado">Sin permiso de almacenamiento, no se puede guardar la imagen</string>
+
+    <!-- Pantalla de inicio: recientes -->
+    <string name="recientes_titulo">Recientes</string>
+    <string name="sin_libros_recientes">Todavía no abriste ningún libro. Los que abras van a aparecer acá, con tu progreso guardado.</string>
+    <string name="progreso_formato">Parte %1$d de %2$d</string>
+    <string name="eliminar">Eliminar</string>
 </resources>

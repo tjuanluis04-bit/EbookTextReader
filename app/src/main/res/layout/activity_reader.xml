@@ -11,6 +11,7 @@
         android:orientation="horizontal"
         android:paddingHorizontal="4dp"
         android:paddingTop="6dp"
+        android:gravity="center_vertical"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -22,7 +23,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:textAllCaps="false"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:text="@string/alinear_izquierda" />
 
         <Button
@@ -32,7 +33,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:textAllCaps="false"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:text="@string/alinear_centro" />
 
         <Button
@@ -42,7 +43,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:textAllCaps="false"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:text="@string/alinear_derecha" />
 
         <Button
@@ -52,8 +53,45 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:textAllCaps="false"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:text="@string/alinear_justificado" />
+
+        <ImageButton
+            android:id="@+id/buttonChapterList"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_list"
+            android:contentDescription="@string/indice_capitulos" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/rowFontSize"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:paddingBottom="4dp"
+        app:layout_constraintTop_toBottomOf="@id/rowAlignment"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <Button
+            android:id="@+id/buttonFontSmaller"
+            style="?attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAllCaps="false"
+            android:text="@string/letra_mas_chica" />
+
+        <Button
+            android:id="@+id/buttonFontLarger"
+            style="?attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAllCaps="false"
+            android:text="@string/letra_mas_grande" />
 
     </LinearLayout>
 
@@ -61,8 +99,8 @@
         android:id="@+id/scrollContent"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        app:layout_constraintTop_toBottomOf="@id/rowAlignment"
-        app:layout_constraintBottom_toTopOf="@id/rowActions"
+        app:layout_constraintTop_toBottomOf="@id/rowFontSize"
+        app:layout_constraintBottom_toTopOf="@id/recyclerImages"
         android:padding="20dp">
 
         <TextView
@@ -79,11 +117,21 @@
         android:id="@+id/progressBar"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        app:layout_constraintTop_toBottomOf="@id/rowAlignment"
-        app:layout_constraintBottom_toTopOf="@id/rowActions"
+        app:layout_constraintTop_toBottomOf="@id/rowFontSize"
+        app:layout_constraintBottom_toTopOf="@id/recyclerImages"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         android:visibility="gone" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recyclerImages"
+        android:layout_width="match_parent"
+        android:layout_height="96dp"
+        android:orientation="horizontal"
+        android:paddingHorizontal="8dp"
+        android:clipToPadding="false"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/rowActions" />
 
     <LinearLayout
         android:id="@+id/rowActions"
