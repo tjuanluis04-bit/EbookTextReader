@@ -18,6 +18,8 @@ class ImageAdapter(
         notifyDataSetChanged()
     }
 
+    fun bitmapAt(index: Int): Bitmap? = items.getOrNull(index)
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
         val binding = ItemGalleryImageBinding.inflate(LayoutInflater.from(parent.context), parent, false)
         return ViewHolder(binding)

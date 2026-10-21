@@ -21,6 +21,7 @@ import java.io.File
 /**
  * Pantalla para elegir CÓMO obtener las partes de un PDF: por sus marcadores
  * reales, definiendo rangos de páginas a mano, o viendo el libro entero corrido.
+ * Si el PDF no tiene texto real (escaneado), deriva directo a ScannedPdfActivity.
  */
 class ChapterListActivity : AppCompatActivity() {
 
@@ -83,9 +84,12 @@ class ChapterListActivity : AppCompatActivity() {
             }
             binding.progressBar.visibility = View.GONE
             if (!hasText) {
-                binding.groupChooser.visibility = View.GONE
-                binding.textNoText.visibility = View.VISIBLE
-                binding.textNoText.text = getString(R.string.pdf_sin_texto)
+                val scannedIntent = Intent(this@ChapterListActivity, ScannedPdfActivity::class.java).apply {
+                    putExtra(ScannedPdfActivity.EXTRA_FILE_PATH, filePath)
+                    putExtra(ScannedPdfActivity.EXTRA_FILE_NAME, fileName)
+                }
+                startActivity(scannedIntent)
+                finish()
             } else {
                 binding.groupChooser.visibility = View.VISIBLE
                 binding.buttonUseBookmarks.isEnabled = hasBookmarks

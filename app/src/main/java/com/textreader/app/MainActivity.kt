@@ -5,10 +5,10 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.textreader.app.data.EditsStore
 import com.textreader.app.data.RecentBook
 import com.textreader.app.data.RecentBooksStore
 import com.textreader.app.databinding.ActivityMainBinding
@@ -25,6 +25,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var store: RecentBooksStore
+    private lateinit var editsStore: EditsStore
     private lateinit var adapter: RecentBookAdapter
 
     private val pickFileLauncher =
@@ -37,6 +38,7 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         store = RecentBooksStore(this)
+        editsStore = EditsStore(this)
 
         binding.buttonOpenFile.setOnClickListener {
             pickFileLauncher.launch(arrayOf("application/epub+zip", "application/pdf"))
@@ -67,8 +69,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun deleteBook(book: RecentBook) {
         store.remove(book.id)
-        try { File(book.filePath).delete() } catch (e: Exception) { /* no pasa nada si falla */ }
+        editsStore.removeForBook(book.id)
+        try { File(book.filePath).delete() } catch (e: Exception) { }
         book.coverPath?.let { try { File(it).delete() } catch (e: Exception) { } }
+        try { File(cacheDir, "inline_images/${book.id}").deleteRecursively() } catch (e: Exception) { }
         refreshRecentList()
     }
 
@@ -92,11 +96,9 @@ class MainActivity : AppCompatActivity() {
                     putExtra(ReaderActivity.EXTRA_PDF_MODE, book.pdfMode)
                     putExtra(ReaderActivity.EXTRA_FULL_BOOK, book.pdfMode == com.textreader.app.data.PdfMode.FULL_BOOK)
                     putExtra(ReaderActivity.EXTRA_FILE_NAME, book.title)
+                    putExtra(ReaderActivity.EXTRA_CHAPTER_INDEX, book.lastIndex)
                     if (book.pdfMode == com.textreader.app.data.PdfMode.CUSTOM) {
                         putExtra(ReaderActivity.EXTRA_CUSTOM_RANGES_JSON, com.textreader.app.data.customRangesToJson(book.customRanges))
-                        putExtra(ReaderActivity.EXTRA_CHAPTER_INDEX, book.lastIndex)
-                    } else {
-                        putExtra(ReaderActivity.EXTRA_CHAPTER_INDEX, book.lastIndex)
                     }
                 }
                 startActivity(intent)

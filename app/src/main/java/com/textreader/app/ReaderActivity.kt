@@ -10,8 +10,12 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
+import android.text.Editable
 import android.text.Layout
+import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.View
 import android.widget.Button
@@ -21,8 +25,8 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import androidx.recyclerview.widget.LinearLayoutManager
 import com.textreader.app.data.CustomRange
+import com.textreader.app.data.EditsStore
 import com.textreader.app.data.PdfMode
 import com.textreader.app.data.RecentBooksStore
 import com.textreader.app.data.customRangesFromJson
@@ -31,11 +35,15 @@ import com.textreader.app.epub.EpubParser
 import com.textreader.app.pdf.PdfChapter
 import com.textreader.app.pdf.PdfParser
 import io.noties.markwon.Markwon
+import io.noties.markwon.ext.tables.TablePlugin
+import io.noties.markwon.image.ImagesPlugin
+import io.noties.markwon.image.file.FileSchemeHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 
 class ReaderActivity : AppCompatActivity() {
 
@@ -59,11 +67,13 @@ class ReaderActivity : AppCompatActivity() {
         private const val BASE_TEXT_SIZE_SP = 16f
         private const val MIN_FONT_SCALE = 0.7f
         private const val MAX_FONT_SCALE = 2.0f
+        private const val UNDO_DEBOUNCE_MS = 700L
     }
 
     private lateinit var binding: ActivityReaderBinding
     private lateinit var markwon: Markwon
     private lateinit var store: RecentBooksStore
+    private lateinit var editsStore: EditsStore
 
     private lateinit var filePath: String
     private lateinit var fileType: String
@@ -72,7 +82,6 @@ class ReaderActivity : AppCompatActivity() {
     private var fullBookMode: Boolean = false
     private var fullBookTitle: String = ""
 
-    // Parsers reutilizados entre capítulos (no se vuelven a abrir/parsear cada vez: más velocidad).
     private var epubParser: EpubParser? = null
     private var pdfParser: PdfParser? = null
     private var epubChapterTitles: List<String> = emptyList()
@@ -83,29 +92,59 @@ class ReaderActivity : AppCompatActivity() {
     private var totalChapters: Int = 1
     private var chapterMarkdown: String = ""
     private var chapterTitle: String = ""
-    private var currentImages: List<Bitmap> = emptyList()
+    private var currentImagePaths: List<String> = emptyList()
+    private var isCurrentChapterEdited: Boolean = false
     private var loadJob: Job? = null
-    private lateinit var imageAdapter: ImageAdapter
+
+    private var isEditing: Boolean = false
+    private val undoStack = mutableListOf<String>()
+    private var pendingUndoSnapshot: String? = null
+    private val undoHandler = Handler(Looper.getMainLooper())
+    private val snapshotRunnable = Runnable {
+        pendingUndoSnapshot?.let { undoStack.add(it) }
+        pendingUndoSnapshot = null
+    }
+    private val editTextWatcher = object : TextWatcher {
+        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
+            if (pendingUndoSnapshot == null) pendingUndoSnapshot = s?.toString()
+            undoHandler.removeCallbacks(snapshotRunnable)
+        }
+        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        override fun afterTextChanged(s: Editable?) {
+            undoHandler.postDelayed(snapshotRunnable, UNDO_DEBOUNCE_MS)
+        }
+    }
 
     private var fontScale: Float = 1.0f
-    private var pendingSaveImage: Pair<Bitmap, String>? = null
+    private var pendingBulkImageSave: Boolean = false
 
     private val requestStoragePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        val pending = pendingSaveImage
-        pendingSaveImage = null
-        if (granted && pending != null) {
-            reallySaveImage(pending.first, pending.second)
-        } else if (!granted) {
+        val wantsBulkSave = pendingBulkImageSave
+        pendingBulkImageSave = false
+        if (granted) {
+            if (wantsBulkSave) performBulkImageSave()
+        } else {
             Toast.makeText(this, getString(R.string.permiso_denegado), Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun hasLegacyStoragePermission(): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityReaderBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        markwon = Markwon.create(this)
+        markwon = Markwon.builder(this)
+            .usePlugin(ImagesPlugin.create { plugin ->
+                plugin.addSchemeHandler(FileSchemeHandler.createWithDirectAccess())
+            })
+            .usePlugin(TablePlugin.create(this))
+            .build()
         store = RecentBooksStore(this)
+        editsStore = EditsStore(this)
 
         val path = intent.getStringExtra(EXTRA_FILE_PATH)
         val type = intent.getStringExtra(EXTRA_FILE_TYPE)
@@ -122,10 +161,6 @@ class ReaderActivity : AppCompatActivity() {
         filePath = path
         fileType = type
 
-        imageAdapter = ImageAdapter(emptyList()) { bitmap, index -> onSaveImageClicked(bitmap, index) }
-        binding.recyclerImages.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
-        binding.recyclerImages.adapter = imageAdapter
-
         setupAlignmentButtons()
         applyAlignment(loadSavedAlignment())
         fontScale = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getFloat(PREF_FONT_SCALE, 1.0f)
@@ -134,9 +169,15 @@ class ReaderActivity : AppCompatActivity() {
         binding.buttonFontSmaller.setOnClickListener { changeFontScale(-0.1f) }
         binding.buttonFontLarger.setOnClickListener { changeFontScale(0.1f) }
         binding.buttonChapterList.setOnClickListener { showChapterListDialog() }
+        binding.buttonEditChapter.setOnClickListener { enterEditMode() }
+        binding.buttonUndo.setOnClickListener { undoEdit() }
+        binding.buttonSaveEdit.setOnClickListener { saveEdit() }
+        binding.buttonCancelEdit.setOnClickListener { exitEditMode(reload = true) }
+        binding.buttonSaveChapterImages.setOnClickListener { saveAllChapterImages() }
 
         binding.buttonCopyChapter.setOnClickListener {
-            copyToClipboard(chapterTitle, markdownToPlainText(chapterMarkdown))
+            val textToCopy = if (isCurrentChapterEdited) chapterMarkdown else markdownToPlainText(chapterMarkdown)
+            copyToClipboard(chapterTitle, textToCopy)
         }
         binding.buttonPrevChapter.setOnClickListener {
             if (currentIndex > 0) loadChapter(currentIndex - 1)
@@ -162,7 +203,6 @@ class ReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** Abre el archivo y arma la lista de capítulos UNA sola vez (se reutiliza en toda la sesión de lectura). */
     private fun setupBookSource(): Boolean {
         return try {
             if (fileType == "epub") {
@@ -182,7 +222,7 @@ class ReaderActivity : AppCompatActivity() {
                         val ranges: List<CustomRange> = customRangesFromJson(intent.getStringExtra(EXTRA_CUSTOM_RANGES_JSON))
                         ranges.map { PdfChapter(it.title, it.startPage, it.endPage) }
                     }
-                    else -> parser.parse().chapters // marcadores
+                    else -> parser.parse().chapters
                 }
                 totalChapters = pdfChapters.size.coerceAtLeast(1)
             }
@@ -192,8 +232,8 @@ class ReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** Carga un capítulo/parte (por índice) dentro de esta misma pantalla, sin volver a parsear el libro entero. */
     private fun loadChapter(index: Int) {
+        if (isEditing) exitEditMode(reload = false)
         loadJob?.cancel()
         setLoadingState()
 
@@ -201,20 +241,26 @@ class ReaderActivity : AppCompatActivity() {
             try {
                 val result = withContext(Dispatchers.IO) { loadChapterContent(index) }
                 currentIndex = index
-                chapterTitle = result.first
-                chapterMarkdown = result.second
-                currentImages = result.third
+                chapterTitle = result.title
+                chapterMarkdown = result.markdown
+                currentImagePaths = result.imagePaths
+                isCurrentChapterEdited = result.isEdited
 
-                title = chapterTitle
-                markwon.setMarkdown(binding.textContent, chapterMarkdown)
+                title = (if (isCurrentChapterEdited) "✎ " else "") + chapterTitle
+
+                if (isCurrentChapterEdited) {
+                    binding.textContent.text = result.markdown
+                } else {
+                    markwon.setMarkdown(binding.textContent, chapterMarkdown)
+                }
                 applyFontScale()
                 binding.scrollContent.post { binding.scrollContent.scrollTo(0, 0) }
 
-                if (currentImages.isNotEmpty()) {
-                    imageAdapter.updateItems(currentImages)
-                    binding.recyclerImages.visibility = View.VISIBLE
+                if (!isCurrentChapterEdited && currentImagePaths.isNotEmpty()) {
+                    binding.buttonSaveChapterImages.visibility = View.VISIBLE
+                    binding.buttonSaveChapterImages.text = getString(R.string.guardar_imagenes_capitulo, currentImagePaths.size)
                 } else {
-                    binding.recyclerImages.visibility = View.GONE
+                    binding.buttonSaveChapterImages.visibility = View.GONE
                 }
 
                 binding.progressBar.visibility = View.GONE
@@ -228,40 +274,56 @@ class ReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** (título, markdown, imágenes) de un capítulo/parte. Se ejecuta en background. */
-    private fun loadChapterContent(index: Int): Triple<String, String, List<Bitmap>> {
+    private data class ChapterContent(
+        val title: String,
+        val markdown: String,
+        val imagePaths: List<String>,
+        val isEdited: Boolean
+    )
+
+    private fun loadChapterContent(index: Int): ChapterContent {
+        val id = bookId
+        if (id != null) {
+            val edit = editsStore.get(id, index)
+            if (edit != null) {
+                val title = if (fileType == "epub") epubChapterTitles.getOrNull(index) else pdfChapters.getOrNull(index)?.title
+                return ChapterContent(title ?: "", edit.text, emptyList(), isEdited = true)
+            }
+        }
+
         return if (fileType == "epub") {
             val parser = epubParser ?: throw IllegalStateException("EPUB no inicializado")
             val title = epubChapterTitles.getOrNull(index) ?: ""
-            val markdown = parser.extractChapterMarkdown(index)
-            val images = try {
-                parser.imagesInChapter(index).mapNotNull { (_, bytes) ->
-                    try { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) } catch (e: Exception) { null }
-                }
-            } catch (e: Exception) {
-                emptyList()
-            }
-            Triple(title, markdown, images)
+            val imageDir = chapterImageDir(index)
+            val markdown = parser.extractChapterMarkdown(index, imageDir)
+            val images = imageDir.listFiles()?.map { it.absolutePath } ?: emptyList()
+            ChapterContent(title, markdown, images, isEdited = false)
         } else {
             val parser = pdfParser ?: throw IllegalStateException("PDF no inicializado")
             val chapter = pdfChapters.getOrNull(index) ?: throw IllegalStateException("parte inexistente")
-            val markdown = parser.extractMarkdown(chapter.startPage, chapter.endPage)
-            // En modo "libro completo" evitamos extraer imágenes de todas las páginas (podría ser muy pesado).
-            val images = if (fullBookMode) emptyList() else try {
-                parser.extractImages(chapter.startPage, chapter.endPage)
-            } catch (e: Exception) {
-                emptyList()
-            }
-            Triple(chapter.title, markdown, images)
+            val imageDir = if (fullBookMode) null else chapterImageDir(index)
+            val markdown = parser.extractMarkdown(chapter.startPage, chapter.endPage, imageDir)
+            val images = imageDir?.listFiles()?.map { it.absolutePath } ?: emptyList()
+            ChapterContent(chapter.title, markdown, images, isEdited = false)
         }
     }
 
+    /** Carpeta fija (vaciada antes de cada extracción) donde se guardan las imágenes incrustadas de un capítulo. */
+    private fun chapterImageDir(index: Int): File {
+        val dir = File(cacheDir, "inline_images/${bookId ?: "tmp"}/$index")
+        dir.listFiles()?.forEach { it.delete() }
+        dir.mkdirs()
+        return dir
+    }
+
     private fun showChapterListDialog() {
-        val titles = if (fileType == "epub") epubChapterTitles else pdfChapters.map { it.title }
-        if (titles.isEmpty()) return
+        val baseTitles = if (fileType == "epub") epubChapterTitles else pdfChapters.map { it.title }
+        if (baseTitles.isEmpty()) return
+        val editedSet = bookId?.let { editsStore.editedIndexesForBook(it) } ?: emptySet()
+        val displayTitles = baseTitles.mapIndexed { i, t -> if (i in editedSet) "✎ $t" else t }
         AlertDialog.Builder(this)
             .setTitle(R.string.indice_capitulos)
-            .setSingleChoiceItems(titles.toTypedArray(), currentIndex) { dialog, which ->
+            .setSingleChoiceItems(displayTitles.toTypedArray(), currentIndex) { dialog, which ->
                 dialog.dismiss()
                 if (which != currentIndex) loadChapter(which)
             }
@@ -284,6 +346,7 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun markdownToPlainText(markdown: String): String {
         var text = markdown
+        text = text.replace(Regex("!\\[\\]\\(file://[^)]*\\)"), "")
         text = text.replace(Regex("(?m)^#{1,6}\\s+"), "")
         text = text.replace(Regex("\\*\\*(.+?)\\*\\*"), "$1")
         text = text.replace(Regex("\\*(.+?)\\*"), "$1")
@@ -297,6 +360,65 @@ class ReaderActivity : AppCompatActivity() {
         Toast.makeText(this, getString(R.string.capitulo_copiado), Toast.LENGTH_SHORT).show()
     }
 
+    // ---- Edición manual del capítulo ----
+
+    private fun enterEditMode() {
+        if (isEditing) return
+        isEditing = true
+        undoStack.clear()
+        pendingUndoSnapshot = null
+
+        val startingText = if (isCurrentChapterEdited) chapterMarkdown else markdownToPlainText(chapterMarkdown)
+        binding.editContent.removeTextChangedListener(editTextWatcher)
+        binding.editContent.setText(startingText)
+        binding.editContent.setSelection(startingText.length)
+        binding.editContent.addTextChangedListener(editTextWatcher)
+
+        binding.scrollContent.visibility = View.GONE
+        binding.editContent.visibility = View.VISIBLE
+        binding.buttonSaveChapterImages.visibility = View.GONE
+        binding.rowActions.visibility = View.GONE
+        binding.rowEditActions.visibility = View.VISIBLE
+    }
+
+    private fun exitEditMode(reload: Boolean) {
+        if (!isEditing) return
+        isEditing = false
+        binding.editContent.visibility = View.GONE
+        binding.scrollContent.visibility = View.VISIBLE
+        binding.rowEditActions.visibility = View.GONE
+        binding.rowActions.visibility = View.VISIBLE
+        if (reload) loadChapter(currentIndex)
+    }
+
+    private fun undoEdit() {
+        if (undoStack.isEmpty()) {
+            Toast.makeText(this, getString(R.string.nada_para_deshacer), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val previous = undoStack.removeAt(undoStack.size - 1)
+        binding.editContent.removeTextChangedListener(editTextWatcher)
+        binding.editContent.setText(previous)
+        binding.editContent.setSelection(previous.length)
+        binding.editContent.addTextChangedListener(editTextWatcher)
+    }
+
+    private fun saveEdit() {
+        val id = bookId
+        if (id == null) {
+            Toast.makeText(this, getString(R.string.error_procesar_libro), Toast.LENGTH_LONG).show()
+            return
+        }
+        val text = binding.editContent.text.toString()
+        editsStore.save(id, currentIndex, text)
+        isEditing = false
+        binding.editContent.visibility = View.GONE
+        binding.scrollContent.visibility = View.VISIBLE
+        binding.rowEditActions.visibility = View.GONE
+        binding.rowActions.visibility = View.VISIBLE
+        loadChapter(currentIndex)
+    }
+
     // ---- Tamaño de letra ----
 
     private fun changeFontScale(delta: Float) {
@@ -307,6 +429,7 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun applyFontScale() {
         binding.textContent.setTextSize(TypedValue.COMPLEX_UNIT_SP, BASE_TEXT_SIZE_SP * fontScale)
+        binding.editContent.setTextSize(TypedValue.COMPLEX_UNIT_SP, BASE_TEXT_SIZE_SP * fontScale)
     }
 
     // ---- Alineación de texto ----
@@ -367,48 +490,62 @@ class ReaderActivity : AppCompatActivity() {
 
     // ---- Guardar imágenes ----
 
-    private fun onSaveImageClicked(bitmap: Bitmap, index: Int) {
-        val safeName = chapterTitle.replace(Regex("[^A-Za-z0-9]+"), "_").take(30).ifBlank { "capitulo" }
-        val displayName = "${safeName}_imagen_${index + 1}.jpg"
-        saveImageToGallery(bitmap, displayName)
-    }
-
-    private fun saveImageToGallery(bitmap: Bitmap, displayName: String) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
-        ) {
-            pendingSaveImage = bitmap to displayName
+    private fun saveAllChapterImages() {
+        if (currentImagePaths.isEmpty()) return
+        if (!hasLegacyStoragePermission()) {
+            pendingBulkImageSave = true
             requestStoragePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             return
         }
-        reallySaveImage(bitmap, displayName)
+        performBulkImageSave()
     }
 
-    private fun reallySaveImage(bitmap: Bitmap, displayName: String) {
-        try {
-            val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
-                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/LectorDeTexto")
+    private fun performBulkImageSave() {
+        val paths = currentImagePaths
+        if (paths.isEmpty()) return
+        lifecycleScope.launch {
+            var saved = 0
+            withContext(Dispatchers.IO) {
+                paths.forEachIndexed { i, path ->
+                    try {
+                        val bmp = BitmapFactory.decodeFile(path)
+                        if (bmp != null) {
+                            val safeName = chapterTitle.replace(Regex("[^A-Za-z0-9]+"), "_").take(30).ifBlank { "capitulo" }
+                            insertImageIntoGallery(bmp, "${safeName}_imagen_${i + 1}.jpg")
+                            saved++
+                        }
+                    } catch (e: Exception) {
+                        // una imagen puntual falló: seguimos con el resto
+                    }
                 }
             }
-            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-            if (uri != null) {
-                contentResolver.openOutputStream(uri)?.use { out ->
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
-                }
-                Toast.makeText(this, getString(R.string.imagen_guardada), Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this, getString(R.string.error_guardar_imagen), Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                this@ReaderActivity,
+                getString(R.string.imagenes_guardadas, saved, paths.size),
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    private fun insertImageIntoGallery(bitmap: Bitmap, displayName: String) {
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/LectorDeTexto")
             }
-        } catch (e: Exception) {
-            Toast.makeText(this, getString(R.string.error_guardar_imagen), Toast.LENGTH_LONG).show()
+        }
+        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+        if (uri != null) {
+            contentResolver.openOutputStream(uri)?.use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+            }
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        undoHandler.removeCallbacks(snapshotRunnable)
         epubParser?.close()
         pdfParser?.close()
     }

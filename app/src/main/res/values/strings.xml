@@ -16,8 +16,27 @@
     <string name="alinear_justificado">Justificado</string>
     <string name="letra_mas_chica">A−</string>
     <string name="letra_mas_grande">A+</string>
-    <string name="pdf_sin_texto">Este PDF no tiene texto seleccionable: parece ser un documento escaneado (imagen). Esta app no hace OCR, así que no se puede extraer ni copiar el texto.</string>
     <string name="libro_completo_titulo">Libro completo</string>
+
+    <!-- Edición manual del capítulo -->
+    <string name="editar">Editar</string>
+    <string name="deshacer">Deshacer</string>
+    <string name="guardar">Guardar</string>
+    <string name="cancelar">Cancelar</string>
+    <string name="nada_para_deshacer">No hay nada para deshacer</string>
+
+    <!-- Imágenes -->
+    <string name="guardar_imagen">Guardar imagen</string>
+    <string name="guardar_imagenes_capitulo">Guardar imágenes de este capítulo (%1$d)</string>
+    <string name="imagen_guardada">Imagen guardada en la galería</string>
+    <string name="imagenes_guardadas">Se guardaron %1$d de %2$d imágenes</string>
+    <string name="error_guardar_imagen">No se pudo guardar la imagen</string>
+    <string name="permiso_denegado">Sin permiso de almacenamiento, no se puede guardar la imagen</string>
+
+    <!-- PDF escaneado (OCR) -->
+    <string name="pdf_escaneado_aviso">Este PDF no tiene texto seleccionable: parece ser un documento escaneado (imagen). Esta app no hace OCR, pero podés guardar cada página como imagen.</string>
+    <string name="paginas_detectadas">%1$d páginas detectadas</string>
+    <string name="guardar_todas_paginas">Guardar todas las páginas</string>
 
     <!-- Selector de método de obtención (PDF) -->
     <string name="elegir_forma_obtencion">¿Cómo querés obtener las partes de este PDF?</string>
@@ -40,10 +59,6 @@
     <!-- Pantalla de lectura -->
     <string name="indice_capitulos">Índice</string>
     <string name="cerrar">Cerrar</string>
-    <string name="guardar_imagen">Guardar imagen</string>
-    <string name="imagen_guardada">Imagen guardada en la galería</string>
-    <string name="error_guardar_imagen">No se pudo guardar la imagen</string>
-    <string name="permiso_denegado">Sin permiso de almacenamiento, no se puede guardar la imagen</string>
 
     <!-- Pantalla de inicio: recientes -->
     <string name="recientes_titulo">Recientes</string>

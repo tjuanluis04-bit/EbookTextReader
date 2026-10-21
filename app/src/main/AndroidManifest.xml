@@ -21,17 +21,10 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".ChapterListActivity"
-            android:exported="false" />
-
-        <activity
-            android:name=".ReaderActivity"
-            android:exported="false" />
-
-        <activity
-            android:name=".PdfRangePickerActivity"
-            android:exported="false" />
+        <activity android:name=".ChapterListActivity" android:exported="false" />
+        <activity android:name=".ReaderActivity" android:exported="false" />
+        <activity android:name=".PdfRangePickerActivity" android:exported="false" />
+        <activity android:name=".ScannedPdfActivity" android:exported="false" />
 
     </application>
 

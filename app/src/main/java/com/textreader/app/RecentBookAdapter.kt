@@ -3,6 +3,7 @@ package com.textreader.app
 import android.graphics.BitmapFactory
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import com.textreader.app.data.RecentBook
@@ -49,6 +50,14 @@ class RecentBookAdapter(
         val progress = if (book.totalUnits > 0) ((book.lastIndex + 1) * 100 / book.totalUnits).coerceIn(0, 100) else 0
         holder.binding.progressBook.progress = progress
         holder.binding.textProgress.text = holder.itemView.context.getString(R.string.progreso_formato, book.lastIndex + 1, book.totalUnits)
+
+        val isEpub = book.fileType == "epub"
+        holder.binding.textTypeBadge.text = if (isEpub) "EPUB" else "PDF"
+        val badgeColor = ContextCompat.getColor(
+            holder.itemView.context,
+            if (isEpub) R.color.badge_epub else R.color.badge_pdf
+        )
+        holder.binding.textTypeBadge.background.setTint(badgeColor)
 
         holder.itemView.setOnClickListener { onClick(book) }
         holder.binding.buttonDeleteBook.setOnClickListener { onDelete(book) }

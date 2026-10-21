@@ -11,15 +11,15 @@ import java.io.FileNotFoundException
 import java.util.zip.ZipFile
 import javax.xml.parsers.DocumentBuilderFactory
 
-/** Una entrada cruda del índice (TOC) del EPUB antes de resolverla contra el spine. */
 private data class RawTocEntry(val title: String, val href: String, val anchorId: String?)
 
 /**
- * Lee un archivo .epub (que es un .zip con XHTML adentro) y permite:
- * - Obtener la lista de capítulos EXACTA, tomada del índice real del libro
- *   (toc.ncx / nav.xhtml), no de la lista cruda de archivos.
- * - Extraer el texto de un capítulo en formato Markdown.
- * - Extraer las imágenes que aparecen dentro de un capítulo, y la portada del libro.
+ * Lee un archivo .epub y permite:
+ * - Obtener la lista de capítulos EXACTA, tomada del índice real del libro.
+ * - Extraer el texto de un capítulo en formato Markdown, con las imágenes
+ *   incrustadas EN EL LUGAR donde aparecen en el texto original (se extraen
+ *   a un archivo temporal y se referencian como `![](file://...)`), y las
+ *   tablas convertidas a tablas de Markdown de verdad (no texto suelto).
  */
 class EpubParser(private val file: File) {
 
@@ -31,12 +31,17 @@ class EpubParser(private val file: File) {
     private var spineHrefs: List<String> = emptyList()
     private var chapters: List<EpubChapter> = emptyList()
 
+    // Estado temporal usado solo durante una extracción (extractChapterMarkdown).
+    private var currentFileDir: String = ""
+    private var currentImageDir: File? = null
+    private var imageCounter: Int = 0
+
     private val headingTags = mapOf(
         "h1" to 1, "h2" to 2, "h3" to 3, "h4" to 4, "h5" to 5, "h6" to 6
     )
     private val blockContainerTags = setOf(
         "p", "div", "section", "article", "blockquote", "ul", "ol",
-        "h1", "h2", "h3", "h4", "h5", "h6"
+        "h1", "h2", "h3", "h4", "h5", "h6", "table", "figure"
     )
 
     fun parse(): EpubBook {
@@ -52,7 +57,6 @@ class EpubParser(private val file: File) {
         val titleNodes = opfDoc.getElementsByTagName("dc:title")
         val bookTitle = if (titleNodes.length > 0) titleNodes.item(0).textContent.trim() else file.nameWithoutExtension
 
-        // Manifest: id -> href / media-type
         val manifestItems = opfDoc.getElementsByTagName("item")
         val idToHrefMap = HashMap<String, String>()
         var ncxId: String? = null
@@ -71,7 +75,6 @@ class EpubParser(private val file: File) {
         }
         idToHref = idToHrefMap
 
-        // <meta name="cover" content="ID"/> (forma clásica de EPUB2 de marcar la portada)
         if (coverId == null) {
             val metas = opfDoc.getElementsByTagName("meta")
             for (i in 0 until metas.length) {
@@ -84,7 +87,6 @@ class EpubParser(private val file: File) {
         }
         coverManifestId = coverId
 
-        // Spine: orden real de lectura de los archivos del libro
         val spineItems = opfDoc.getElementsByTagName("itemref")
         val spineList = ArrayList<String>()
         for (i in 0 until spineItems.length) {
@@ -94,7 +96,6 @@ class EpubParser(private val file: File) {
         }
         spineHrefs = spineList
 
-        // Índice real del libro (solo el nivel superior = capítulos, no sub-secciones)
         val rawToc: List<RawTocEntry> = try {
             if (ncxId != null) {
                 readTopLevelTocFromNcx(idToHrefMap.getValue(ncxId))
@@ -167,50 +168,43 @@ class EpubParser(private val file: File) {
     }
 
     /**
-     * Texto en Markdown de un capítulo, cortando exactamente donde termina.
+     * Texto en Markdown de un capítulo. Las imágenes del capítulo se extraen
+     * a archivos dentro de [imageDir] y quedan referenciadas en el lugar
+     * exacto donde aparecían en el texto original.
      */
-    fun extractChapterMarkdown(index: Int): String {
+    fun extractChapterMarkdown(index: Int, imageDir: File): String {
+        currentImageDir = imageDir
+        imageCounter = 0
+        imageDir.mkdirs()
+
         val sb = StringBuilder()
-        for (element in chapterElements(index)) {
+        for ((fileDir, element) in chapterElementsWithDir(index)) {
+            currentFileDir = fileDir
             appendMarkdownBlockElement(element, sb)
         }
         return sb.toString().trim()
     }
 
-    /** Imágenes (nombre de archivo + bytes) que aparecen dentro de un capítulo. */
+    /** Imágenes (nombre de archivo + bytes) que aparecen dentro de un capítulo (sin incrustar). */
     fun imagesInChapter(index: Int): List<Pair<String, ByteArray>> {
         val images = ArrayList<Pair<String, ByteArray>>()
-        val chapter = chapters.getOrNull(index) ?: return images
-        val next = chapters.getOrNull(index + 1)
-        val startSpine = chapter.spineIndex
-        val endSpine = next?.spineIndex ?: (spineHrefs.size - 1)
-
-        for (spineIdx in startSpine..endSpine) {
-            if (spineIdx !in spineHrefs.indices) continue
-            val href = spineHrefs[spineIdx]
-            val startAnchor = if (spineIdx == startSpine) chapter.anchorId else null
-            val endAnchor = if (next != null && spineIdx == next.spineIndex) next.anchorId else null
-            val chunk = chapterFileChunk(href, startAnchor, endAnchor)
-            val fileDir = href.substringBeforeLast('/', "")
-            for (element in chunk) {
-                val imgs = if (element.tagName().equals("img", true)) listOf(element) else element.select("img")
-                for (img in imgs) {
-                    val src = img.attr("src").ifBlank { img.attr("xlink:href") }
-                    if (src.isBlank()) continue
-                    try {
-                        val resolved = resolvePath(fileDir, src)
-                        val bytes = readEntryAsBytes(resolved)
-                        if (bytes != null) images.add(resolved.substringAfterLast('/') to bytes)
-                    } catch (e: Exception) {
-                        // imagen no encontrada/ilegible: se omite
-                    }
+        for ((fileDir, element) in chapterElementsWithDir(index)) {
+            val imgs = if (element.tagName().equals("img", true)) listOf(element) else element.select("img")
+            for (img in imgs) {
+                val src = img.attr("src").ifBlank { img.attr("xlink:href") }
+                if (src.isBlank()) continue
+                try {
+                    val resolved = resolvePath(fileDir, src)
+                    val bytes = readEntryAsBytes(resolved)
+                    if (bytes != null) images.add(resolved.substringAfterLast('/') to bytes)
+                } catch (e: Exception) {
+                    // se omite
                 }
             }
         }
         return images
     }
 
-    /** Portada del libro (si el EPUB la declara), lista para mostrar/guardar. */
     fun coverImage(): Pair<String, ByteArray>? {
         val id = coverManifestId ?: return firstImageInBook()
         val href = idToHref[id] ?: return firstImageInBook()
@@ -221,28 +215,30 @@ class EpubParser(private val file: File) {
 
     private fun firstImageInBook(): Pair<String, ByteArray>? {
         if (spineHrefs.isEmpty()) return null
-        val imgs = imagesInChapter(0)
-        return imgs.firstOrNull()
+        return imagesInChapter(0).firstOrNull()
     }
 
-    /** Devuelve los elementos de nivel superior (ya recortados por capítulo) listos para procesar. */
-    private fun chapterElements(index: Int): List<Element> {
+    /** (directorio del archivo, elemento) para cada elemento de nivel superior que compone el capítulo. */
+    private fun chapterElementsWithDir(index: Int): List<Pair<String, Element>> {
         val chapter = chapters.getOrNull(index) ?: return emptyList()
         val next = chapters.getOrNull(index + 1)
         val startSpine = chapter.spineIndex
         val endSpine = next?.spineIndex ?: (spineHrefs.size - 1)
 
-        val result = ArrayList<Element>()
+        val result = ArrayList<Pair<String, Element>>()
         for (spineIdx in startSpine..endSpine) {
             if (spineIdx !in spineHrefs.indices) continue
+            val href = spineHrefs[spineIdx]
+            val fileDir = href.substringBeforeLast('/', "")
             val startAnchor = if (spineIdx == startSpine) chapter.anchorId else null
             val endAnchor = if (next != null && spineIdx == next.spineIndex) next.anchorId else null
-            result.addAll(chapterFileChunk(spineHrefs[spineIdx], startAnchor, endAnchor))
+            for (element in chapterFileChunk(href, startAnchor, endAnchor)) {
+                result.add(fileDir to element)
+            }
         }
         return result
     }
 
-    /** Devuelve los elementos de nivel superior del <body> de un archivo, recortados entre dos anclas. */
     private fun chapterFileChunk(href: String, startAnchor: String?, endAnchor: String?): List<Element> {
         val doc = Jsoup.parse(readEntryAsString(href))
         val body = doc.body()
@@ -274,6 +270,24 @@ class EpubParser(private val file: File) {
         val tag = node.tagName().lowercase()
         when {
             tag == "script" || tag == "style" -> return
+
+            tag == "img" -> {
+                emitImageMarkdown(node)?.let { sb.append(it).append("\n\n") }
+            }
+
+            tag == "table" -> {
+                val md = convertTableToMarkdown(node)
+                if (md.isNotBlank()) sb.append(md).append("\n\n")
+            }
+
+            tag == "figure" -> {
+                node.children().forEach { appendMarkdownBlockElement(it, sb) }
+            }
+
+            tag == "figcaption" -> {
+                val text = inlineMarkdown(node).trim()
+                if (text.isNotEmpty()) sb.append('*').append(text).append("*\n\n")
+            }
 
             headingTags.containsKey(tag) -> {
                 val text = inlineMarkdown(node).trim()
@@ -314,6 +328,47 @@ class EpubParser(private val file: File) {
         }
     }
 
+    /** Convierte un <table> HTML a una tabla real de Markdown (no texto suelto). */
+    private fun convertTableToMarkdown(table: Element): String {
+        val rows = table.select("> thead > tr, > tbody > tr, > tr")
+        if (rows.isEmpty()) return ""
+        val sb = StringBuilder()
+        rows.forEachIndexed { rowIndex, row ->
+            val cells = row.select("> th, > td")
+            if (cells.isEmpty()) return@forEachIndexed
+            sb.append("| ")
+            cells.forEach { cell ->
+                val text = cell.text().trim().replace("|", "\\|").replace("\n", " ")
+                sb.append(text).append(" | ")
+            }
+            sb.append('\n')
+            if (rowIndex == 0) {
+                sb.append('|')
+                repeat(cells.size) { sb.append(" --- |") }
+                sb.append('\n')
+            }
+        }
+        return sb.toString().trim()
+    }
+
+    /** Extrae la imagen al directorio de trabajo y devuelve su referencia en Markdown, o null si falla. */
+    private fun emitImageMarkdown(img: Element): String? {
+        val src = img.attr("src").ifBlank { img.attr("xlink:href") }
+        if (src.isBlank()) return null
+        val dir = currentImageDir ?: return null
+        return try {
+            val resolved = resolvePath(currentFileDir, src)
+            val bytes = readEntryAsBytes(resolved) ?: return null
+            val ext = resolved.substringAfterLast('.', "jpg").lowercase().filter { it.isLetterOrDigit() }.ifBlank { "jpg" }.take(4)
+            imageCounter++
+            val outFile = File(dir, "img_$imageCounter.$ext")
+            outFile.writeBytes(bytes)
+            "![](file://${outFile.absolutePath})"
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     private fun inlineMarkdown(element: Element): String {
         val sb = StringBuilder()
         for (node in element.childNodes()) {
@@ -330,6 +385,7 @@ class EpubParser(private val file: File) {
                 when (tag) {
                     "script", "style" -> Unit
                     "br" -> sb.append("  \n")
+                    "img" -> emitImageMarkdown(node)?.let { sb.append("\n\n").append(it).append("\n\n") }
                     "strong", "b" -> {
                         sb.append("**")
                         node.childNodes().forEach { appendInlineNode(it, sb) }

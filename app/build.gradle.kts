@@ -51,12 +51,10 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
-    // Lectura de EPUB (es un .zip con XHTML dentro)
     implementation("org.jsoup:jsoup:1.17.2")
-
-    // Lectura de PDF (extracción de texto continuo, sin cortes por página)
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 
-    // Renderizado de Markdown (subtítulos, negrita, itálica) en pantalla
     implementation("io.noties.markwon:core:4.6.2")
+    implementation("io.noties.markwon:image:4.6.2")
+    implementation("io.noties.markwon:ext-tables:4.6.2")
 }

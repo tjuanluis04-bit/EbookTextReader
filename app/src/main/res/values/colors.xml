@@ -3,4 +3,6 @@
     <color name="brand_primary_dark">#4E1212</color>
     <color name="brand_accent">#C79A3D</color>
     <color name="status_text">#B00020</color>
+    <color name="badge_epub">#2E7D32</color>
+    <color name="badge_pdf">#1565C0</color>
 </resources>
