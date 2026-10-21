@@ -37,7 +37,6 @@ import com.textreader.app.pdf.PdfParser
 import io.noties.markwon.Markwon
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.image.ImagesPlugin
-import io.noties.markwon.image.file.FileSchemeHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -138,9 +137,7 @@ class ReaderActivity : AppCompatActivity() {
         binding = ActivityReaderBinding.inflate(layoutInflater)
         setContentView(binding.root)
         markwon = Markwon.builder(this)
-            .usePlugin(ImagesPlugin.create { plugin ->
-                plugin.addSchemeHandler(FileSchemeHandler.createWithDirectAccess())
-            })
+            .usePlugin(ImagesPlugin.create())
             .usePlugin(TablePlugin.create(this))
             .build()
         store = RecentBooksStore(this)
