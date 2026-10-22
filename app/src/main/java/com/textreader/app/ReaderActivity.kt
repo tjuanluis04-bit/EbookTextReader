@@ -187,6 +187,9 @@ class ReaderActivity : AppCompatActivity() {
             binding.buttonPrevChapter.visibility = View.GONE
             binding.buttonNextChapter.visibility = View.GONE
         }
+        // El texto seleccionable rompe el renderizado de imágenes incrustadas de Markwon,
+        // así que solo lo habilitamos en "libro completo" (ahí nunca hay imágenes, por diseño).
+        binding.textContent.setTextIsSelectable(fullBookMode)
 
         binding.progressBar.visibility = View.VISIBLE
         lifecycleScope.launch {

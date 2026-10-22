@@ -115,7 +115,6 @@
             android:id="@+id/textContent"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textIsSelectable="true"
             android:textSize="16sp"
             android:lineSpacingExtra="4dp" />
 
