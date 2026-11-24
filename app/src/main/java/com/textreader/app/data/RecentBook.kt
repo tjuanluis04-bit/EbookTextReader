@@ -22,6 +22,8 @@ data class RecentBook(
     var totalUnits: Int = 1,
     var pdfMode: String? = null,
     var customRanges: List<CustomRange> = emptyList(),
+    /** true si el libro no tiene texto real (solo imágenes/escaneo): necesita OCR. */
+    var isOcr: Boolean = false,
     var addedAt: Long = System.currentTimeMillis(),
     var lastOpenedAt: Long = System.currentTimeMillis()
 )

@@ -8,9 +8,11 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.textreader.app.data.CustomRange
 import com.textreader.app.data.PdfMode
 import com.textreader.app.data.RecentBooksStore
 import com.textreader.app.data.customRangesFromJson
+import com.textreader.app.data.customRangesToJson
 import com.textreader.app.databinding.ActivityChapterListBinding
 import com.textreader.app.pdf.PdfParser
 import kotlinx.coroutines.Dispatchers
@@ -19,9 +21,9 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * Pantalla para elegir CÓMO obtener las partes de un PDF: por sus marcadores
- * reales, definiendo rangos de páginas a mano, o viendo el libro entero corrido.
- * Si el PDF no tiene texto real (escaneado), deriva directo a ScannedPdfActivity.
+ * Pantalla para elegir CÓMO obtener las partes de un PDF: por sus marcadores reales, definiendo
+ * rangos de páginas a mano, o viendo el libro entero corrido. Si el PDF no tiene texto real
+ * (escaneado), deriva directo a ScannedPdfActivity.
  */
 class ChapterListActivity : AppCompatActivity() {
 
@@ -76,36 +78,44 @@ class ChapterListActivity : AppCompatActivity() {
 
         binding.progressBar.visibility = View.VISIBLE
         lifecycleScope.launch {
-            val (hasText, hasBookmarks) = withContext(Dispatchers.IO) {
+            val info = withContext(Dispatchers.IO) {
                 val parser = PdfParser(applicationContext, File(filePath))
-                val book = parser.parse()
-                parser.close()
-                book.hasExtractableText to book.hasBookmarks
+                try {
+                    val book = parser.parse()
+                    Triple(book.hasExtractableText, book.hasBookmarks, book.chapters.size)
+                } finally {
+                    parser.close()
+                }
             }
+            val (hasText, hasBookmarks, bookmarkParts) = info
             binding.progressBar.visibility = View.GONE
             if (!hasText) {
+                store.update(bookId) { it.isOcr = true }
                 val scannedIntent = Intent(this@ChapterListActivity, ScannedPdfActivity::class.java).apply {
                     putExtra(ScannedPdfActivity.EXTRA_FILE_PATH, filePath)
                     putExtra(ScannedPdfActivity.EXTRA_FILE_NAME, fileName)
+                    putExtra(ScannedPdfActivity.EXTRA_FILE_TYPE, "pdf")
                 }
                 startActivity(scannedIntent)
                 finish()
             } else {
                 binding.groupChooser.visibility = View.VISIBLE
                 binding.buttonUseBookmarks.isEnabled = hasBookmarks
+                binding.buttonUseBookmarks.text = if (hasBookmarks) {
+                    getString(R.string.usar_marcadores_n, bookmarkParts)
+                } else {
+                    getString(R.string.usar_marcadores)
+                }
                 binding.textNoBookmarks.visibility = if (hasBookmarks) View.GONE else View.VISIBLE
             }
         }
     }
 
-    private fun saveModeAndOpen(mode: String, ranges: List<com.textreader.app.data.CustomRange>) {
-        val books = store.loadAll()
-        val idx = books.indexOfFirst { it.id == bookId }
-        if (idx >= 0) {
-            books[idx].pdfMode = mode
-            books[idx].customRanges = ranges
-            books[idx].lastIndex = 0
-            store.saveAll(books)
+    private fun saveModeAndOpen(mode: String, ranges: List<CustomRange>) {
+        store.update(bookId) { book ->
+            book.pdfMode = mode
+            book.customRanges = ranges
+            book.lastIndex = 0
         }
 
         val intent = Intent(this, ReaderActivity::class.java).apply {
@@ -117,7 +127,7 @@ class ChapterListActivity : AppCompatActivity() {
             putExtra(ReaderActivity.EXTRA_CHAPTER_INDEX, 0)
             putExtra(ReaderActivity.EXTRA_FULL_BOOK, mode == PdfMode.FULL_BOOK)
             if (mode == PdfMode.CUSTOM) {
-                putExtra(ReaderActivity.EXTRA_CUSTOM_RANGES_JSON, com.textreader.app.data.customRangesToJson(ranges))
+                putExtra(ReaderActivity.EXTRA_CUSTOM_RANGES_JSON, customRangesToJson(ranges))
             }
         }
         startActivity(intent)

@@ -2,6 +2,7 @@ package com.textreader.app
 
 import android.graphics.BitmapFactory
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.ItemTouchHelper
@@ -31,6 +32,7 @@ class RecentBookAdapter(
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val book = items[position]
+        val context = holder.itemView.context
         holder.binding.textBookTitle.text = book.title
 
         val cover = book.coverPath?.let { path ->
@@ -47,17 +49,31 @@ class RecentBookAdapter(
             holder.binding.imageCover.setImageResource(R.drawable.ic_book_placeholder)
         }
 
-        val progress = if (book.totalUnits > 0) ((book.lastIndex + 1) * 100 / book.totalUnits).coerceIn(0, 100) else 0
-        holder.binding.progressBook.progress = progress
-        holder.binding.textProgress.text = holder.itemView.context.getString(R.string.progreso_formato, book.lastIndex + 1, book.totalUnits)
+        if (book.isOcr) {
+            holder.binding.progressBook.visibility = View.GONE
+            holder.binding.textProgress.text = context.getString(R.string.solo_imagenes)
+        } else {
+            holder.binding.progressBook.visibility = View.VISIBLE
+            val progress = if (book.totalUnits > 0) ((book.lastIndex + 1) * 100 / book.totalUnits).coerceIn(0, 100) else 0
+            holder.binding.progressBook.progress = progress
+            holder.binding.textProgress.text = context.getString(R.string.progreso_formato, book.lastIndex + 1, book.totalUnits)
+        }
 
+        // Distintivo del tipo de archivo (PDF / EPUB). Se usa mutate() para que el color de un
+        // distintivo no se contagie a los demás (comparten el mismo drawable).
         val isEpub = book.fileType == "epub"
         holder.binding.textTypeBadge.text = if (isEpub) "EPUB" else "PDF"
-        val badgeColor = ContextCompat.getColor(
-            holder.itemView.context,
-            if (isEpub) R.color.badge_epub else R.color.badge_pdf
-        )
-        holder.binding.textTypeBadge.background.setTint(badgeColor)
+        holder.binding.textTypeBadge.background.mutate()
+            .setTint(ContextCompat.getColor(context, if (isEpub) R.color.badge_epub else R.color.badge_pdf))
+
+        // Distintivo de OCR (aparece además del de tipo de archivo).
+        if (book.isOcr) {
+            holder.binding.textOcrBadge.visibility = View.VISIBLE
+            holder.binding.textOcrBadge.background.mutate()
+                .setTint(ContextCompat.getColor(context, R.color.badge_ocr))
+        } else {
+            holder.binding.textOcrBadge.visibility = View.GONE
+        }
 
         holder.itemView.setOnClickListener { onClick(book) }
         holder.binding.buttonDeleteBook.setOnClickListener { onDelete(book) }

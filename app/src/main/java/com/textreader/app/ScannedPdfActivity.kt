@@ -1,54 +1,49 @@
 package com.textreader.app
 
-import android.Manifest
-import android.content.ContentValues
-import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.os.Build
+import android.content.Intent
 import android.os.Bundle
-import android.provider.MediaStore
 import android.view.View
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import com.textreader.app.databinding.ActivityScannedPdfBinding
+import com.textreader.app.epub.EpubParser
 import com.textreader.app.pdf.PdfParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.Executors
 
 /**
- * Para PDF sin texto real (escaneados): como no se puede extraer ni copiar
- * texto, se muestra cada página como imagen para poder guardarlas (una por
- * una, o todas de una vez).
+ * Para libros sin texto real (escaneados, PDF o EPUB): como no se puede copiar texto, se muestra
+ * cada página/imagen para verla en grande y guardarla (una por una o todas de una vez), en
+ * buena calidad.
  */
-class ScannedPdfActivity : AppCompatActivity() {
+class ScannedPdfActivity : BaseSaveActivity() {
 
     companion object {
         const val EXTRA_FILE_PATH = "extra_file_path"
         const val EXTRA_FILE_NAME = "extra_file_name"
-        private const val THUMBNAIL_SCALE = 0.55f
+        const val EXTRA_FILE_TYPE = "extra_file_type"
+        private const val PDF_THUMB_SCALE = 0.4f
+        private const val EPUB_THUMB_SIDE = 360
     }
 
     private lateinit var binding: ActivityScannedPdfBinding
     private lateinit var filePath: String
-    private var parser: PdfParser? = null
-    private lateinit var adapter: ImageAdapter
-    private var pendingAction: (() -> Unit)? = null
+    private lateinit var fileName: String
+    private var isEpub = false
 
-    private val requestStoragePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        val action = pendingAction
-        pendingAction = null
-        if (granted) {
-            action?.invoke()
-        } else {
-            Toast.makeText(this, getString(R.string.permiso_denegado), Toast.LENGTH_LONG).show()
-        }
-    }
+    private var pdfParser: PdfParser? = null
+    private var epubParser: EpubParser? = null
+    private var epubImages: List<String> = emptyList()
+    private var itemCount = 0
+
+    // Un solo hilo para todo lo que toca el PDF/EPUB (los lectores no son thread-safe).
+    private val scanExecutor = Executors.newSingleThreadExecutor()
+    private val scanDispatcher = scanExecutor.asCoroutineDispatcher()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,95 +56,138 @@ class ScannedPdfActivity : AppCompatActivity() {
             return
         }
         filePath = path
-        title = intent.getStringExtra(EXTRA_FILE_NAME) ?: getString(R.string.app_name)
+        fileName = intent.getStringExtra(EXTRA_FILE_NAME) ?: getString(R.string.app_name)
+        isEpub = intent.getStringExtra(EXTRA_FILE_TYPE) == "epub"
+        title = fileName
 
-        adapter = ImageAdapter(emptyList()) { bitmap, index -> saveOnePage(bitmap, index) }
         binding.recyclerPages.layoutManager = GridLayoutManager(this, 3)
-        binding.recyclerPages.adapter = adapter
-        binding.buttonSaveAllPages.setOnClickListener { onSaveAllClicked() }
+        binding.buttonSaveAllPages.setOnClickListener { ensureStoragePermission { saveAll() } }
 
         binding.progressBar.visibility = View.VISIBLE
         lifecycleScope.launch {
-            val thumbnails = withContext(Dispatchers.IO) {
-                val p = PdfParser(applicationContext, File(filePath))
-                parser = p
-                val count = p.pageCount()
-                (0 until count).mapNotNull { p.renderPageBitmap(it, THUMBNAIL_SCALE) }
-            }
+            val ok = withContext(scanDispatcher) { openSource() }
             binding.progressBar.visibility = View.GONE
-            adapter.updateItems(thumbnails)
-            binding.textPageCount.text = getString(R.string.paginas_detectadas, thumbnails.size)
-            binding.buttonSaveAllPages.visibility = if (thumbnails.isNotEmpty()) View.VISIBLE else View.GONE
+            if (!ok || itemCount == 0) {
+                Toast.makeText(this@ScannedPdfActivity, getString(R.string.error_procesar_libro), Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            binding.recyclerPages.adapter = PageGridAdapter(
+                scope = lifecycleScope,
+                dispatcher = scanDispatcher,
+                count = itemCount,
+                loadThumb = { index -> loadThumbnail(index) },
+                onOpen = { index -> openLarge(index) },
+                onSave = { index -> ensureStoragePermission { saveOne(index) } }
+            )
+            binding.textPageCount.text = getString(
+                if (isEpub) R.string.imagenes_detectadas else R.string.paginas_detectadas,
+                itemCount
+            )
+            binding.buttonSaveAllPages.visibility = View.VISIBLE
         }
     }
 
-    private fun ensurePermission(action: () -> Unit) {
-        val hasPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
-            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-        if (hasPermission) {
-            action()
+    private fun openSource(): Boolean {
+        return try {
+            if (isEpub) {
+                val parser = EpubParser(File(filePath))
+                parser.parse()
+                epubParser = parser
+                epubImages = parser.listBookImages()
+                itemCount = epubImages.size
+            } else {
+                val parser = PdfParser(applicationContext, File(filePath))
+                pdfParser = parser
+                itemCount = parser.pageCount()
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** Se ejecuta en el hilo de escaneo. */
+    private fun loadThumbnail(index: Int) = try {
+        if (isEpub) {
+            epubParser?.readImageBytes(epubImages[index])?.let { ImageUtils.decodeBytesSampled(it, EPUB_THUMB_SIDE) }
         } else {
-            pendingAction = action
-            requestStoragePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            pdfParser?.renderPageBitmap(index, PDF_THUMB_SCALE)
         }
+    } catch (e: Exception) {
+        null
     }
 
-    private fun saveOnePage(bitmap: Bitmap, index: Int) {
-        ensurePermission {
-            try {
-                insertImageIntoGallery(bitmap, "pagina_${index + 1}.jpg")
-                Toast.makeText(this, getString(R.string.imagen_guardada), Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(this, getString(R.string.error_guardar_imagen), Toast.LENGTH_LONG).show()
+    private fun openLarge(index: Int) {
+        val intent = Intent(this, ImageViewerActivity::class.java).apply {
+            putExtra(ImageViewerActivity.EXTRA_TITLE, "$fileName · ${index + 1}/$itemCount")
+            if (isEpub) {
+                putExtra(ImageViewerActivity.EXTRA_EPUB_PATH, filePath)
+                putExtra(ImageViewerActivity.EXTRA_EPUB_ENTRY, epubImages[index])
+            } else {
+                putExtra(ImageViewerActivity.EXTRA_PDF_PATH, filePath)
+                putExtra(ImageViewerActivity.EXTRA_PAGE_INDEX, index)
             }
         }
+        startActivity(intent)
     }
 
-    private fun onSaveAllClicked() {
-        ensurePermission { saveAllPages() }
+    /** Guarda un elemento en calidad completa. Se ejecuta en el hilo de escaneo. */
+    private fun saveItemFullQuality(index: Int): Boolean {
+        return try {
+            if (isEpub) {
+                val entry = epubImages[index]
+                val bytes = epubParser?.readImageBytes(entry) ?: return false
+                val ext = entry.substringAfterLast('.', "jpg").lowercase().filter { it.isLetterOrDigit() }.ifBlank { "jpg" }
+                GallerySaver.saveBytes(this, bytes, "imagen_${index + 1}.$ext")
+            } else {
+                val bmp = pdfParser?.renderPageHighQuality(index) ?: return false
+                val ok = GallerySaver.saveBitmap(this, bmp, "pagina_${index + 1}.jpg")
+                bmp.recycle()
+                ok
+            }
+        } catch (e: Exception) {
+            false
+        }
     }
 
-    private fun saveAllPages() {
-        binding.progressBar.visibility = View.VISIBLE
+    private fun saveOne(index: Int) {
+        lifecycleScope.launch {
+            val ok = withContext(scanDispatcher) { saveItemFullQuality(index) }
+            val msg = if (ok) R.string.imagen_guardada else R.string.error_guardar_imagen
+            Toast.makeText(this@ScannedPdfActivity, getString(msg), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun saveAll() {
         binding.buttonSaveAllPages.isEnabled = false
         lifecycleScope.launch {
             var saved = 0
-            val total = adapter.itemCount
-            withContext(Dispatchers.IO) {
-                for (i in 0 until total) {
-                    try {
-                        val bitmap = currentBitmapAt(i) ?: continue
-                        insertImageIntoGallery(bitmap, "pagina_${i + 1}.jpg")
-                        saved++
-                    } catch (e: Exception) {
-                        // una página puntual falló: seguimos con el resto
-                    }
-                }
+            for (i in 0 until itemCount) {
+                binding.textPageCount.text = getString(R.string.guardando_progreso, i + 1, itemCount)
+                val ok = withContext(scanDispatcher) { saveItemFullQuality(i) }
+                if (ok) saved++
             }
-            binding.progressBar.visibility = View.GONE
+            binding.textPageCount.text = getString(
+                if (isEpub) R.string.imagenes_detectadas else R.string.paginas_detectadas,
+                itemCount
+            )
             binding.buttonSaveAllPages.isEnabled = true
-            Toast.makeText(this@ScannedPdfActivity, getString(R.string.imagenes_guardadas, saved, total), Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun currentBitmapAt(index: Int): Bitmap? = adapter.bitmapAt(index)
-
-    private fun insertImageIntoGallery(bitmap: Bitmap, displayName: String) {
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/LectorDeTexto")
-            }
-        }
-        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return
-        contentResolver.openOutputStream(uri)?.use { out ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+            Toast.makeText(
+                this@ScannedPdfActivity,
+                getString(R.string.imagenes_guardadas, saved, itemCount),
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        parser?.close()
+        val pdf = pdfParser
+        val epub = epubParser
+        scanExecutor.execute {
+            try { pdf?.close() } catch (e: Exception) { }
+            try { epub?.close() } catch (e: Exception) { }
+        }
+        scanExecutor.shutdown()
     }
 }

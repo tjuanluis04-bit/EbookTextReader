@@ -9,8 +9,10 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.textreader.app.data.EditsStore
+import com.textreader.app.data.PdfMode
 import com.textreader.app.data.RecentBook
 import com.textreader.app.data.RecentBooksStore
+import com.textreader.app.data.customRangesToJson
 import com.textreader.app.databinding.ActivityMainBinding
 import com.textreader.app.epub.EpubParser
 import com.textreader.app.pdf.PdfParser
@@ -77,6 +79,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resumeBook(book: RecentBook) {
+        if (book.isOcr) {
+            openScanned(book.filePath, book.title, book.fileType)
+            return
+        }
         if (book.fileType == "epub") {
             val intent = Intent(this, ReaderActivity::class.java).apply {
                 putExtra(ReaderActivity.EXTRA_FILE_PATH, book.filePath)
@@ -94,16 +100,25 @@ class MainActivity : AppCompatActivity() {
                     putExtra(ReaderActivity.EXTRA_FILE_TYPE, "pdf")
                     putExtra(ReaderActivity.EXTRA_BOOK_ID, book.id)
                     putExtra(ReaderActivity.EXTRA_PDF_MODE, book.pdfMode)
-                    putExtra(ReaderActivity.EXTRA_FULL_BOOK, book.pdfMode == com.textreader.app.data.PdfMode.FULL_BOOK)
+                    putExtra(ReaderActivity.EXTRA_FULL_BOOK, book.pdfMode == PdfMode.FULL_BOOK)
                     putExtra(ReaderActivity.EXTRA_FILE_NAME, book.title)
                     putExtra(ReaderActivity.EXTRA_CHAPTER_INDEX, book.lastIndex)
-                    if (book.pdfMode == com.textreader.app.data.PdfMode.CUSTOM) {
-                        putExtra(ReaderActivity.EXTRA_CUSTOM_RANGES_JSON, com.textreader.app.data.customRangesToJson(book.customRanges))
+                    if (book.pdfMode == PdfMode.CUSTOM) {
+                        putExtra(ReaderActivity.EXTRA_CUSTOM_RANGES_JSON, customRangesToJson(book.customRanges))
                     }
                 }
                 startActivity(intent)
             }
         }
+    }
+
+    private fun openScanned(filePath: String, title: String, fileType: String) {
+        val intent = Intent(this, ScannedPdfActivity::class.java).apply {
+            putExtra(ScannedPdfActivity.EXTRA_FILE_PATH, filePath)
+            putExtra(ScannedPdfActivity.EXTRA_FILE_NAME, title)
+            putExtra(ScannedPdfActivity.EXTRA_FILE_TYPE, fileType)
+        }
+        startActivity(intent)
     }
 
     private fun openPdfChooser(filePath: String, fileName: String, bookId: String) {
@@ -142,59 +157,75 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        binding.textStatus.text = ""
         val displayTitle = fileName.substringBeforeLast('.')
 
         lifecycleScope.launch {
-            val coverPath = withContext(Dispatchers.IO) { generateCover(destFile, extension, bookId) }
+            val analysis = withContext(Dispatchers.IO) { analyzeBook(destFile, extension, bookId) }
+            binding.textStatus.text = ""
             val book = RecentBook(
                 id = bookId,
                 title = displayTitle,
                 fileType = extension,
                 filePath = destFile.absolutePath,
-                coverPath = coverPath
+                coverPath = analysis.coverPath,
+                isOcr = analysis.isOcr
             )
             store.upsert(book)
             refreshRecentList()
 
-            if (isEpub) {
-                val intent = Intent(this@MainActivity, ReaderActivity::class.java).apply {
-                    putExtra(ReaderActivity.EXTRA_FILE_PATH, destFile.absolutePath)
-                    putExtra(ReaderActivity.EXTRA_FILE_TYPE, "epub")
-                    putExtra(ReaderActivity.EXTRA_CHAPTER_INDEX, 0)
-                    putExtra(ReaderActivity.EXTRA_BOOK_ID, bookId)
+            when {
+                analysis.isOcr -> openScanned(destFile.absolutePath, displayTitle, extension)
+                isEpub -> {
+                    val intent = Intent(this@MainActivity, ReaderActivity::class.java).apply {
+                        putExtra(ReaderActivity.EXTRA_FILE_PATH, destFile.absolutePath)
+                        putExtra(ReaderActivity.EXTRA_FILE_TYPE, "epub")
+                        putExtra(ReaderActivity.EXTRA_CHAPTER_INDEX, 0)
+                        putExtra(ReaderActivity.EXTRA_BOOK_ID, bookId)
+                    }
+                    startActivity(intent)
                 }
-                startActivity(intent)
-            } else {
-                openPdfChooser(destFile.absolutePath, displayTitle, bookId)
+                else -> openPdfChooser(destFile.absolutePath, displayTitle, bookId)
             }
         }
     }
 
-    private fun generateCover(file: File, extension: String, bookId: String): String? {
-        return try {
+    private data class BookAnalysis(val coverPath: String?, val isOcr: Boolean)
+
+    /** Genera la portada y detecta si el libro no tiene texto real (necesita OCR). */
+    private fun analyzeBook(file: File, extension: String, bookId: String): BookAnalysis {
+        var coverPath: String? = null
+        var isOcr = false
+        try {
             val coversDir = File(filesDir, "covers").apply { mkdirs() }
             val coverFile = File(coversDir, "$bookId.jpg")
             val bitmap = if (extension == "epub") {
                 val parser = EpubParser(file)
-                parser.parse()
-                val img = parser.coverImage()
-                parser.close()
-                img?.second?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
+                try {
+                    parser.parse()
+                    isOcr = try { parser.looksImageOnly() } catch (e: Exception) { false }
+                    parser.coverImage()?.second?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
+                } finally {
+                    parser.close()
+                }
             } else {
                 val parser = PdfParser(applicationContext, file)
-                val bmp = parser.renderCoverBitmap()
-                parser.close()
-                bmp
+                try {
+                    isOcr = try { !parser.parse().hasExtractableText } catch (e: Exception) { false }
+                    parser.renderCoverBitmap()
+                } finally {
+                    parser.close()
+                }
             }
-            if (bitmap == null) return null
-            FileOutputStream(coverFile).use { out ->
-                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+            if (bitmap != null) {
+                FileOutputStream(coverFile).use { out ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                }
+                coverPath = coverFile.absolutePath
             }
-            coverFile.absolutePath
         } catch (e: Exception) {
-            null
+            // si falla el análisis, el libro se abre igual (sin portada ni marca de OCR)
         }
+        return BookAnalysis(coverPath, isOcr)
     }
 
     private fun queryFileName(uri: Uri): String? {

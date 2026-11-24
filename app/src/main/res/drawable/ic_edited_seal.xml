@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sello propio de "parte editada": disco dorado con una pluma. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#33C79A3D"
+        android:pathData="M12,2a10,10 0 1,0 0.01,0z" />
+    <path
+        android:strokeColor="#C79A3D"
+        android:strokeWidth="1.6"
+        android:pathData="M12,2a10,10 0 1,0 0.01,0z" />
+    <path
+        android:fillColor="#C79A3D"
+        android:pathData="M7.5,16.5 C7.5,11.5 11,7.5 17,6.5 C17,12 13.5,15.8 7.5,16.5 Z" />
+    <path
+        android:strokeColor="#C79A3D"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:pathData="M7.5,16.5 L5.6,18.4" />
+    <path
+        android:strokeColor="#4E1212"
+        android:strokeWidth="1"
+        android:strokeLineCap="round"
+        android:pathData="M8.8,15.2 L14.6,9.4" />
+</vector>

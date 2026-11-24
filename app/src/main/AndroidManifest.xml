@@ -25,6 +25,7 @@
         <activity android:name=".ReaderActivity" android:exported="false" />
         <activity android:name=".PdfRangePickerActivity" android:exported="false" />
         <activity android:name=".ScannedPdfActivity" android:exported="false" />
+        <activity android:name=".ImageViewerActivity" android:exported="false" />
 
     </application>
 

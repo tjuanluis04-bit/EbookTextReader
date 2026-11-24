@@ -5,4 +5,5 @@
     <color name="status_text">#B00020</color>
     <color name="badge_epub">#2E7D32</color>
     <color name="badge_pdf">#1565C0</color>
+    <color name="badge_ocr">#B26A00</color>
 </resources>

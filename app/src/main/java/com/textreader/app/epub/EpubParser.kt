@@ -15,11 +15,10 @@ private data class RawTocEntry(val title: String, val href: String, val anchorId
 
 /**
  * Lee un archivo .epub y permite:
- * - Obtener la lista de capítulos EXACTA, tomada del índice real del libro.
- * - Extraer el texto de un capítulo en formato Markdown, con las imágenes
- *   incrustadas EN EL LUGAR donde aparecen en el texto original (se extraen
- *   a un archivo temporal y se referencian como `![](file://...)`), y las
- *   tablas convertidas a tablas de Markdown de verdad (no texto suelto).
+ * - Obtener la lista de capítulos exacta, tomada del índice real del libro.
+ * - Extraer el texto de un capítulo en Markdown, con las imágenes referenciadas en su lugar
+ *   (se extraen a archivos temporales como `![](file://...)`) y las tablas como tablas.
+ * - Detectar si el libro es solo de imágenes (necesita OCR) y listar todas sus imágenes.
  */
 class EpubParser(private val file: File) {
 
@@ -31,7 +30,6 @@ class EpubParser(private val file: File) {
     private var spineHrefs: List<String> = emptyList()
     private var chapters: List<EpubChapter> = emptyList()
 
-    // Estado temporal usado solo durante una extracción (extractChapterMarkdown).
     private var currentFileDir: String = ""
     private var currentImageDir: File? = null
     private var imageCounter: Int = 0
@@ -168,9 +166,8 @@ class EpubParser(private val file: File) {
     }
 
     /**
-     * Texto en Markdown de un capítulo. Las imágenes del capítulo se extraen
-     * a archivos dentro de [imageDir] y quedan referenciadas en el lugar
-     * exacto donde aparecían en el texto original.
+     * Texto en Markdown de un capítulo. Las imágenes se extraen a archivos dentro de [imageDir]
+     * y quedan referenciadas en el lugar exacto donde aparecían en el texto original.
      */
     fun extractChapterMarkdown(index: Int, imageDir: File): String {
         currentImageDir = imageDir
@@ -189,9 +186,9 @@ class EpubParser(private val file: File) {
     fun imagesInChapter(index: Int): List<Pair<String, ByteArray>> {
         val images = ArrayList<Pair<String, ByteArray>>()
         for ((fileDir, element) in chapterElementsWithDir(index)) {
-            val imgs = if (element.tagName().equals("img", true)) listOf(element) else element.select("img")
+            val imgs = if (isImageTag(element)) listOf(element) else element.select("img, image")
             for (img in imgs) {
-                val src = img.attr("src").ifBlank { img.attr("xlink:href") }
+                val src = imageSource(img)
                 if (src.isBlank()) continue
                 try {
                     val resolved = resolvePath(fileDir, src)
@@ -204,6 +201,48 @@ class EpubParser(private val file: File) {
         }
         return images
     }
+
+    /**
+     * true si el libro parece estar hecho solo de imágenes (páginas escaneadas), es decir,
+     * tiene imágenes pero casi nada de texto copiable. Se revisa una muestra de capítulos.
+     */
+    fun looksImageOnly(): Boolean {
+        if (chapters.isEmpty()) return false
+        val total = chapters.size
+        val sampleCount = minOf(total, 8)
+        val indexes = (0 until sampleCount).map { it * total / sampleCount }.distinct()
+        var textChars = 0
+        var imageCount = 0
+        for (idx in indexes) {
+            for ((_, element) in chapterElementsWithDir(idx)) {
+                textChars += element.text().trim().length
+                imageCount += if (isImageTag(element)) 1 else element.select("img, image").size
+            }
+        }
+        return imageCount > 0 && textChars < 40 * indexes.size
+    }
+
+    /** Rutas (dentro del EPUB) de todas las imágenes del libro, en orden de lectura y sin repetir. */
+    fun listBookImages(): List<String> {
+        val result = LinkedHashSet<String>()
+        for (href in spineHrefs) {
+            try {
+                val fileDir = href.substringBeforeLast('/', "")
+                val doc = Jsoup.parse(readEntryAsString(href))
+                for (img in doc.select("img, image")) {
+                    val src = imageSource(img)
+                    if (src.isBlank()) continue
+                    val resolved = resolvePath(fileDir, src)
+                    if (readEntryAsBytes(resolved) != null) result.add(resolved)
+                }
+            } catch (e: Exception) {
+                // archivo ilegible: se omite
+            }
+        }
+        return result.toList()
+    }
+
+    fun readImageBytes(path: String): ByteArray? = readEntryAsBytes(path)
 
     fun coverImage(): Pair<String, ByteArray>? {
         val id = coverManifestId ?: return firstImageInBook()
@@ -218,7 +257,15 @@ class EpubParser(private val file: File) {
         return imagesInChapter(0).firstOrNull()
     }
 
-    /** (directorio del archivo, elemento) para cada elemento de nivel superior que compone el capítulo. */
+    private fun isImageTag(e: Element): Boolean {
+        val t = e.tagName().lowercase()
+        return t == "img" || t == "image"
+    }
+
+    private fun imageSource(img: Element): String {
+        return img.attr("src").ifBlank { img.attr("xlink:href") }.ifBlank { img.attr("href") }
+    }
+
     private fun chapterElementsWithDir(index: Int): List<Pair<String, Element>> {
         val chapter = chapters.getOrNull(index) ?: return emptyList()
         val next = chapters.getOrNull(index + 1)
@@ -271,8 +318,14 @@ class EpubParser(private val file: File) {
         when {
             tag == "script" || tag == "style" -> return
 
-            tag == "img" -> {
+            tag == "img" || tag == "image" -> {
                 emitImageMarkdown(node)?.let { sb.append(it).append("\n\n") }
+            }
+
+            tag == "svg" -> {
+                node.select("image, img").forEach { img ->
+                    emitImageMarkdown(img)?.let { sb.append(it).append("\n\n") }
+                }
             }
 
             tag == "table" -> {
@@ -328,7 +381,6 @@ class EpubParser(private val file: File) {
         }
     }
 
-    /** Convierte un <table> HTML a una tabla real de Markdown (no texto suelto). */
     private fun convertTableToMarkdown(table: Element): String {
         val rows = table.select("> thead > tr, > tbody > tr, > tr")
         if (rows.isEmpty()) return ""
@@ -351,9 +403,9 @@ class EpubParser(private val file: File) {
         return sb.toString().trim()
     }
 
-    /** Extrae la imagen al directorio de trabajo y devuelve su referencia en Markdown, o null si falla. */
+    /** Extrae la imagen original (sin recomprimir) al directorio de trabajo y devuelve su referencia. */
     private fun emitImageMarkdown(img: Element): String? {
-        val src = img.attr("src").ifBlank { img.attr("xlink:href") }
+        val src = imageSource(img)
         if (src.isBlank()) return null
         val dir = currentImageDir ?: return null
         return try {
@@ -385,7 +437,7 @@ class EpubParser(private val file: File) {
                 when (tag) {
                     "script", "style" -> Unit
                     "br" -> sb.append("  \n")
-                    "img" -> emitImageMarkdown(node)?.let { sb.append("\n\n").append(it).append("\n\n") }
+                    "img", "image" -> emitImageMarkdown(node)?.let { sb.append("\n\n").append(it).append("\n\n") }
                     "strong", "b" -> {
                         sb.append("**")
                         node.childNodes().forEach { appendInlineNode(it, sb) }

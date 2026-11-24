@@ -7,16 +7,19 @@ import java.io.File
 data class ChapterEdit(val text: String, val editedAt: Long = System.currentTimeMillis())
 
 /**
- * Guarda el texto editado a mano de capítulos/partes puntuales, sin tocar el
- * archivo original. Queda asociado al libro (por su id interno) y al índice
- * del capítulo, así que si el libro se borra de la app y se vuelve a subir
- * (lo que genera un id nuevo), la edición anterior no se aplica.
+ * Guarda el texto editado a mano de capítulos/partes, sin tocar el archivo original.
+ *
+ * Cada edición queda asociada al libro, a una "configuración" (scope) y al índice de la parte.
+ * La configuración distingue, por ejemplo, "marcadores" de "rangos propios": así, si cambias
+ * la forma de abrir un PDF, las ediciones de una configuración no se pegan en partes distintas
+ * de otra. Si vuelves a la misma configuración, tus ediciones reaparecen.
  */
 class EditsStore(context: Context) {
 
     private val file = File(context.filesDir, "chapter_edits.json")
 
-    private fun key(bookId: String, chapterIndex: Int) = "$bookId::$chapterIndex"
+    private fun key(bookId: String, scope: String, index: Int) = "$bookId::$scope::$index"
+    private fun legacyKey(bookId: String, index: Int) = "$bookId::$index"
 
     @Synchronized
     private fun loadRaw(): JSONObject {
@@ -33,23 +36,43 @@ class EditsStore(context: Context) {
         file.writeText(obj.toString())
     }
 
+    /** Pasa las ediciones guardadas con el formato anterior (sin scope) a la configuración actual. */
+    private fun migrateLegacy(obj: JSONObject, bookId: String, scope: String): Boolean {
+        val prefix = "$bookId::"
+        val legacyKeys = mutableListOf<String>()
+        val it = obj.keys()
+        while (it.hasNext()) {
+            val k = it.next()
+            if (k.startsWith(prefix)) {
+                val rest = k.substring(prefix.length)
+                if (rest.isNotEmpty() && rest.all { c -> c.isDigit() }) legacyKeys.add(k)
+            }
+        }
+        if (legacyKeys.isEmpty()) return false
+        for (k in legacyKeys) {
+            val index = k.substring(prefix.length).toInt()
+            obj.put(key(bookId, scope, index), obj.getJSONObject(k))
+            obj.remove(k)
+        }
+        return true
+    }
+
     @Synchronized
-    fun get(bookId: String, chapterIndex: Int): ChapterEdit? {
+    fun get(bookId: String, scope: String, chapterIndex: Int): ChapterEdit? {
         val obj = loadRaw()
-        val k = key(bookId, chapterIndex)
+        if (migrateLegacy(obj, bookId, scope)) saveRaw(obj)
+        val k = key(bookId, scope, chapterIndex)
         if (!obj.has(k)) return null
         val entry = obj.getJSONObject(k)
         return ChapterEdit(entry.getString("text"), entry.optLong("editedAt", System.currentTimeMillis()))
     }
 
+    /** Índices de las partes editadas de un libro en la configuración dada (para marcarlas en el índice). */
     @Synchronized
-    fun hasEdit(bookId: String, chapterIndex: Int): Boolean = get(bookId, chapterIndex) != null
-
-    /** Devuelve el conjunto de índices de capítulo editados para un libro (para marcarlos en el índice). */
-    @Synchronized
-    fun editedIndexesForBook(bookId: String): Set<Int> {
+    fun editedIndexesForBook(bookId: String, scope: String): Set<Int> {
         val obj = loadRaw()
-        val prefix = "$bookId::"
+        if (migrateLegacy(obj, bookId, scope)) saveRaw(obj)
+        val prefix = "$bookId::$scope::"
         val result = mutableSetOf<Int>()
         val keysIterator = obj.keys()
         while (keysIterator.hasNext()) {
@@ -62,12 +85,12 @@ class EditsStore(context: Context) {
     }
 
     @Synchronized
-    fun save(bookId: String, chapterIndex: Int, text: String) {
+    fun save(bookId: String, scope: String, chapterIndex: Int, text: String) {
         val obj = loadRaw()
         val entry = JSONObject()
         entry.put("text", text)
         entry.put("editedAt", System.currentTimeMillis())
-        obj.put(key(bookId, chapterIndex), entry)
+        obj.put(key(bookId, scope, chapterIndex), entry)
         saveRaw(obj)
     }
 

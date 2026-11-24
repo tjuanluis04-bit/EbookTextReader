@@ -8,6 +8,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.textreader.app.data.CustomRange
+import com.textreader.app.data.customRangesFromJson
 import com.textreader.app.data.customRangesToJson
 import com.textreader.app.databinding.ActivityPdfRangePickerBinding
 import com.textreader.app.databinding.ItemRangeRowBinding
@@ -17,10 +18,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
+/**
+ * Permite definir a mano cuántas "partes" tiene el PDF y qué rango de páginas abarca cada una.
+ * Si ya había partes definidas, se muestran para poder corregirlas o completarlas.
+ */
 class PdfRangePickerActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_FILE_PATH = "extra_file_path"
+        const val EXTRA_EXISTING_RANGES_JSON = "extra_existing_ranges_json"
         const val RESULT_RANGES_JSON = "result_ranges_json"
     }
 
@@ -55,12 +61,20 @@ class PdfRangePickerActivity : AppCompatActivity() {
         binding.buttonAddRange.setOnClickListener { addRow() }
         binding.buttonConfirmRanges.setOnClickListener { confirmRanges() }
 
-        addRow()
+        val existing = customRangesFromJson(intent.getStringExtra(EXTRA_EXISTING_RANGES_JSON))
+        if (existing.isNotEmpty()) {
+            existing.forEach { addRow(it.title, it.startPage + 1, it.endPage + 1) }
+        } else {
+            addRow()
+        }
     }
 
-    private fun addRow() {
+    private fun addRow(title: String = "", startPage: Int? = null, endPage: Int? = null) {
         val rowBinding = ItemRangeRowBinding.inflate(LayoutInflater.from(this), binding.containerRows, false)
         rowBinding.editTitle.hint = getString(R.string.parte_numero, rows.size + 1)
+        if (title.isNotBlank()) rowBinding.editTitle.setText(title)
+        if (startPage != null) rowBinding.editStart.setText(startPage.toString())
+        if (endPage != null) rowBinding.editEnd.setText(endPage.toString())
         val rowViews = RowViews(rowBinding.root, rowBinding.editTitle, rowBinding.editStart, rowBinding.editEnd)
         rowBinding.buttonRemoveRow.setOnClickListener {
             binding.containerRows.removeView(rowBinding.root)

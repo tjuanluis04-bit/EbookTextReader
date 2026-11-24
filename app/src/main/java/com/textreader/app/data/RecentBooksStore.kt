@@ -35,6 +35,7 @@ class RecentBooksStore(context: Context) {
                         totalUnits = o.optInt("totalUnits", 1),
                         pdfMode = o.optString("pdfMode", "").ifEmpty { null },
                         customRanges = ranges,
+                        isOcr = o.optBoolean("isOcr", false),
                         addedAt = o.optLong("addedAt", System.currentTimeMillis()),
                         lastOpenedAt = o.optLong("lastOpenedAt", System.currentTimeMillis())
                     )
@@ -68,6 +69,7 @@ class RecentBooksStore(context: Context) {
                 rangesArr.put(ro)
             }
             o.put("customRanges", rangesArr)
+            o.put("isOcr", b.isOcr)
             o.put("addedAt", b.addedAt)
             o.put("lastOpenedAt", b.lastOpenedAt)
             arr.put(o)
@@ -91,6 +93,17 @@ class RecentBooksStore(context: Context) {
             list[idx].lastIndex = lastIndex
             list[idx].totalUnits = totalUnits
             list[idx].lastOpenedAt = System.currentTimeMillis()
+            saveAll(list)
+        }
+    }
+
+    /** Aplica un cambio a un libro puntual y lo guarda. */
+    @Synchronized
+    fun update(id: String, change: (RecentBook) -> Unit) {
+        val list = loadAll()
+        val idx = list.indexOfFirst { it.id == id }
+        if (idx >= 0) {
+            change(list[idx])
             saveAll(list)
         }
     }

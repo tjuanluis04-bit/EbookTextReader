@@ -18,6 +18,7 @@ import com.tom_roush.pdfbox.text.TextPosition
 import java.io.File
 import java.io.FileOutputStream
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 data class PdfChapter(
@@ -35,9 +36,8 @@ data class PdfBook(
 
 /**
  * Extrae texto de un PDF de forma continua y en Markdown, con las imágenes
- * incrustadas en el lugar donde aparecen (aproximado: los PDF no tienen una
- * estructura de documento tan clara como el HTML, así que la posición se
- * calcula comparando la altura vertical de cada imagen con la del texto).
+ * incrustadas en el lugar donde aparecen (aproximado: la posición se calcula
+ * comparando la altura vertical de cada imagen con la del texto).
  */
 class PdfParser(context: Context, private val file: File) {
 
@@ -45,6 +45,7 @@ class PdfParser(context: Context, private val file: File) {
         private const val SAMPLE_PAGES_FOR_TEXT_CHECK = 15
         private const val MIN_CHARS_PER_SAMPLED_PAGE = 5
         private const val PARAGRAPH_GAP_FACTOR = 1.8
+        private const val HIGH_QUALITY_LONG_SIDE_PX = 2400f
     }
 
     init {
@@ -132,9 +133,8 @@ class PdfParser(context: Context, private val file: File) {
     }
 
     /**
-     * Texto en Markdown de un rango de páginas. Si se pasa [imageDir], además
-     * extrae las imágenes de esas páginas y las incrusta en el lugar que les
-     * corresponde según su posición vertical en la página.
+     * Texto en Markdown de un rango de páginas. Si se pasa [imageDir], además extrae las imágenes
+     * de esas páginas y las incrusta en el lugar que les corresponde según su posición vertical.
      */
     fun extractMarkdown(startPage: Int, endPage: Int, imageDir: File? = null): String {
         val doc = open()
@@ -162,7 +162,7 @@ class PdfParser(context: Context, private val file: File) {
                                 imgCounter++
                                 val outFile = File(imageDir, "pdfimg_${pageIdx}_$imgCounter.jpg")
                                 FileOutputStream(outFile).use { out ->
-                                    found.bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                                    found.bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
                                 }
                                 val topDownY = (pageHeight - found.y).toDouble()
                                 lines.add(Line("", 0.0, topDownY, pageIdx + 1, "![](file://${outFile.absolutePath})"))
@@ -236,9 +236,25 @@ class PdfParser(context: Context, private val file: File) {
         return buckets.maxByOrNull { it.value }?.key ?: sizes.average()
     }
 
-    /** Renderiza una página completa como imagen (para el modo "sin texto": guardar páginas como imagen). */
-    fun renderPageBitmap(pageIndex: Int, scale: Float = 1.3f): Bitmap? {
+    /** Página completa en baja resolución (para las miniaturas de la cuadrícula). */
+    fun renderPageBitmap(pageIndex: Int, scale: Float = 0.5f): Bitmap? {
         return try {
+            getRenderer().renderImage(pageIndex, scale)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Página completa en alta calidad (lado largo de ~2400 px), pensada para guardar o ver en grande
+     * páginas escaneadas con el texto bien legible.
+     */
+    fun renderPageHighQuality(pageIndex: Int): Bitmap? {
+        return try {
+            val doc = open()
+            val box = doc.getPage(pageIndex).mediaBox
+            val longSide = max(box.width, box.height)
+            val scale = if (longSide > 0f) (HIGH_QUALITY_LONG_SIDE_PX / longSide).coerceIn(1.5f, 4f) else 3f
             getRenderer().renderImage(pageIndex, scale)
         } catch (e: Exception) {
             null
@@ -284,7 +300,6 @@ class PdfParser(context: Context, private val file: File) {
         }
     }
 
-    /** Recorre el contenido de una página buscando imágenes y su posición vertical real. */
     private class ImagePositionFinder : PDFStreamEngine() {
         data class Found(val bitmap: Bitmap, val y: Float)
         val found = mutableListOf<Found>()
